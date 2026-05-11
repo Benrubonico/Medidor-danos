@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <!--
+    viewport: imprescindible en móvil. Sin esto, el navegador renderiza
+    como si fuera un escritorio de 980px y luego lo encoge, lo que rompe
+    todo el dimensionado. user-scalable=no evita zoom accidental con
+    pellizco mientras dibujas con el dedo.
+  -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Medidor de daños</title>
+  <style>
+    /*
+      Reset mínimo. En un proyecto de aprendizaje no quiero arrastrar
+      una librería de reset entera, pero sí los tres márgenes que más
+      molestan en móvil.
+    */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;          /* nada de scroll accidental durante dibujo */
+      background: #111;
+      font-family: -apple-system, system-ui, sans-serif;
+      color: #fff;
+      /* touch-action evita que el navegador interprete tus gestos como
+         scroll/zoom y se "robe" los eventos antes de que los reciba el
+         canvas. Esto es el causante #1 de bugs raros al dibujar en móvil. */
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    /* Contenedor que ocupa toda la pantalla */
+    #app {
+      position: fixed;
+      inset: 0;                  /* top:0 right:0 bottom:0 left:0 */
+      display: flex;
+      flex-direction: column;
+    }
+
+    /*
+      El área del lienzo es la zona principal. Le doy flex:1 para que
+      ocupe todo lo que pueda. La barra inferior tiene altura fija.
+    */
+    #stage {
+      position: relative;
+      flex: 1;
+      overflow: hidden;
+      background: #000;
+    }
+
+    /*
+      Tanto el vídeo como el canvas ocupan el mismo espacio.
+      object-fit: cover hace que el vídeo se recorte para llenar
+      el contenedor sin deformarse (como una foto de portada).
+    */
+    #video, #canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    /* El canvas empieza invisible; aparece cuando hay foto que mostrar */
+    #canvas { display: none; }
+
+    /* Barra de controles abajo */
+    #controls {
+      display: flex;
+      gap: 8px;
+      padding: 12px;
+      background: #1a1a1a;
+      border-top: 1px solid #333;
+    }
+
+    button {
+      flex: 1;
+      padding: 14px 10px;
+      font-size: 15px;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      background: #2a6fdb;
+      color: #fff;
+      cursor: pointer;
+    }
+    button:disabled {
+      background: #333;
+      color: #666;
+    }
+    button.secondary { background: #444; }
+    button.danger { background: #c0392b; }
+
+    /* Mensaje superior con instrucciones para el usuario */
+    #hint {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      padding: 10px 14px;
+      background: rgba(0,0,0,0.65);
+      border-radius: 8px;
+      font-size: 14px;
+      text-align: center;
+      pointer-events: none;      /* importante: no debe bloquear toques */
+    }
+
+    /* Modal simple para pedir la distancia real de la calibración */
+    #modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+    }
+    #modal.show { display: flex; }
+    #modal .box {
+      background: #222;
+      padding: 24px;
+      border-radius: 12px;
+      width: 90%;
+      max-width: 320px;
+    }
+    #modal h3 { margin-bottom: 12px; }
+    #modal input {
+      width: 100%;
+      padding: 12px;
+      font-size: 16px;          /* 16px evita zoom automático en iOS */
+      border-radius: 8px;
+      border: 1px solid #555;
+      background: #111;
+      color: #fff;
+      margin: 12px 0;
+    }
+  </style>
+</head>
+<body>
+
+<div id="app">
+  <div id="stage">
+    <!-- playsinline es CRÍTICO en iOS: sin él, Safari abre el vídeo en
+         pantalla completa nativa y pierdes el control del layout.
+         muted permite autoplay; autoplay arranca sin un play manual. -->
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+    <div id="hint">Apunta la cámara al daño con el flexómetro visible</div>
+  </div>
+
+  <div id="controls">
+    <!-- Los botones cambian según el estado. Los declaro todos y los
+         muestro/oculto desde JS. -->
+    <button id="btn-shoot">📷 Capturar</button>
+    <button id="btn-retake" class="secondary" style="display:none">↺ Repetir</button>
+    <button id="btn-undo" class="secondary" style="display:none">Deshacer</button>
+    <button id="btn-next" style="display:none">Siguiente</button>
+    <button id="btn-save" style="display:none">💾 Guardar</button>
+  </div>
+</div>
+
+<!-- Modal de calibración -->
+<div id="modal">
+  <div class="box">
+    <h3>Calibración</h3>
+    <p style="font-size:14px;color:#aaa">¿Cuántos milímetros hay entre los dos puntos que marcaste?</p>
+    <input id="mm-input" type="number" inputmode="decimal" placeholder="Ej: 100" />
+    <div style="display:flex;gap:8px">
+      <button id="modal-cancel" class="secondary">Cancelar</button>
+      <button id="modal-ok">Aceptar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   ESTADO GLOBAL
+   ============================================================
+   Mantengo todo el estado en un único objeto. En proyectos
+   pequeños esto es más legible que tener veinte variables
+   sueltas, y cuando depures basta con hacer console.log(state).
+   ============================================================ */
+const state = {
+  phase: 'camera',            // 'camera' | 'calibrate' | 'draw' | 'done'
+  stream: null,               // stream de la cámara, para poder cerrarlo
+  photo: null,                // Image con la foto capturada
+  calibPoints: [],            // [{x,y}, {x,y}] en coords del CANVAS
+  mmPerPixel: null,           // factor de escala una vez calibrado
+  outline: [],                // array de {x,y} del contorno del daño
+  drawing: false              // si el dedo está actualmente trazando
+};
+
+/* Referencias a elementos del DOM. Las cojo una sola vez al inicio
+   en lugar de llamar a getElementById cada dos por tres. */
+const video   = document.getElementById('video');
+const canvas  = document.getElementById('canvas');
+const ctx     = canvas.getContext('2d');
+const hint    = document.getElementById('hint');
+const modal   = document.getElementById('modal');
+const mmInput = document.getElementById('mm-input');
+
+const btnShoot  = document.getElementById('btn-shoot');
+const btnRetake = document.getElementById('btn-retake');
+const btnUndo   = document.getElementById('btn-undo');
+const btnNext   = document.getElementById('btn-next');
+const btnSave   = document.getElementById('btn-save');
+
+
+/* ============================================================
+   FASE 1: ARRANCAR LA CÁMARA
+   ============================================================ */
+async function startCamera() {
+  try {
+    /* facingMode "environment" = cámara trasera. En PC, el navegador
+       ignora este hint y abre la única cámara que haya. */
+    state.stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+      audio: false
+    });
+    video.srcObject = state.stream;
+  } catch (err) {
+    /* Errores típicos: NotAllowedError (el usuario denegó permisos),
+       NotFoundError (sin cámara), o que estés sirviendo por http://
+       en lugar de https://. */
+    hint.textContent = 'Error con la cámara: ' + err.message;
+  }
+}
+
+
+/* ============================================================
+   FASE 2: CAPTURAR FOTO
+   ============================================================
+   Cuando dispara, copio el frame actual del <video> al <canvas>.
+   Importante: el canvas debe tener el mismo aspect ratio que el
+   vídeo para que las proporciones cuadren. videoWidth y videoHeight
+   son las dimensiones REALES del stream, no las CSS.
+   ============================================================ */
+function takePhoto() {
+  /* Ajusto el tamaño interno del canvas al del vídeo */
+  canvas.width  = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  /* Dibujo el frame actual en el canvas */
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+  /* Guardo la imagen para poder redibujarla más tarde. Convertir
+     a una Image me permite volverla a pintar tantas veces como
+     quiera (cada vez que añada un punto, redibujo todo). */
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+  state.photo = new Image();
+  state.photo.onload = () => {
+    /* Una vez la imagen está cargada, paso a calibración */
+    stopCamera();
+    setPhase('calibrate');
+  };
+  state.photo.src = dataUrl;
+}
+
+function stopCamera() {
+  if (state.stream) {
+    /* Liberar la cámara: importante para el indicador de uso y
+       para no comerte batería. Cada track del stream se cierra
+       individualmente. */
+    state.stream.getTracks().forEach(t => t.stop());
+    state.stream = null;
+  }
+  video.style.display = 'none';
+  canvas.style.display = 'block';
+}
+
+
+/* ============================================================
+   COORDENADAS: la función más importante del archivo
+   ============================================================
+   El evento de toque nos da clientX/clientY en píxeles CSS de
+   pantalla. Pero el canvas internamente trabaja en sus propios
+   píxeles (los del atributo width/height, que es el tamaño del
+   vídeo original, p.ej. 1920x1080). Necesito traducir.
+
+   getBoundingClientRect me da la posición y tamaño REAL en
+   pantalla del canvas (ya con el escalado CSS aplicado).
+   ============================================================ */
+function getCanvasPoint(evt) {
+  /* En eventos touch, las coords están dentro de touches[0].
+     En eventos mouse, están directamente en el evento. */
+  const t = evt.touches ? evt.touches[0] : evt;
+  const rect = canvas.getBoundingClientRect();
+
+  /* Posición del toque relativa a la esquina del canvas, en px CSS */
+  const cssX = t.clientX - rect.left;
+  const cssY = t.clientY - rect.top;
+
+  /* Convierto a coords internas del canvas con regla de tres */
+  const x = cssX * (canvas.width  / rect.width);
+  const y = cssY * (canvas.height / rect.height);
+  return { x, y };
+}
+
+
+/* ============================================================
+   REDIBUJADO COMPLETO
+   ============================================================
+   En cada cambio (nuevo punto, nuevo trazo, deshacer...) borro
+   y vuelvo a pintar todo desde cero. Es la forma más simple y
+   robusta de mantener el canvas siempre coherente con el state.
+   ============================================================ */
+function redraw() {
+  if (!state.photo) return;
+
+  /* Foto de fondo */
+  ctx.drawImage(state.photo, 0, 0, canvas.width, canvas.height);
+
+  /* Puntos de calibración (cruces amarillas) */
+  state.calibPoints.forEach((p, i) => {
+    drawCross(p.x, p.y, '#ffeb3b');
+    /* Etiqueta numérica al lado */
+    ctx.fillStyle = '#ffeb3b';
+    ctx.font = 'bold 28px sans-serif';
+    ctx.fillText(String(i + 1), p.x + 18, p.y - 18);
+  });
+
+  /* Línea entre los dos puntos de calibración */
+  if (state.calibPoints.length === 2) {
+    const [a, b] = state.calibPoints;
+    ctx.strokeStyle = '#ffeb3b';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+
+  /* Contorno del daño */
+  if (state.outline.length > 0) {
+    ctx.strokeStyle = '#e53935';
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(state.outline[0].x, state.outline[0].y);
+    for (let i = 1; i < state.outline.length; i++) {
+      ctx.lineTo(state.outline[i].x, state.outline[i].y);
+    }
+    ctx.stroke();
+  }
+}
+
+function drawCross(x, y, color) {
+  const s = 14;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(x - s, y); ctx.lineTo(x + s, y);
+  ctx.moveTo(x, y - s); ctx.lineTo(x, y + s);
+  ctx.stroke();
+}
+
+
+/* ============================================================
+   FASE 3: CALIBRACIÓN
+   ============================================================ */
+function onCalibrateTap(evt) {
+  evt.preventDefault();
+  if (state.calibPoints.length >= 2) return;
+
+  const p = getCanvasPoint(evt);
+  state.calibPoints.push(p);
+  redraw();
+
+  /* Cuando ya hay dos puntos, abro el modal para pedir los mm */
+  if (state.calibPoints.length === 2) {
+    modal.classList.add('show');
+    mmInput.value = '';
+    mmInput.focus();
+  }
+}
+
+function confirmCalibration() {
+  const mm = parseFloat(mmInput.value);
+  if (!mm || mm <= 0) {
+    alert('Introduce un número válido en mm');
+    return;
+  }
+  const [a, b] = state.calibPoints;
+  const pixels = Math.hypot(b.x - a.x, b.y - a.y);
+  state.mmPerPixel = mm / pixels;
+  modal.classList.remove('show');
+  setPhase('draw');
+}
+
+
+/* ============================================================
+   FASE 4: DIBUJAR EL CONTORNO
+   ============================================================
+   Tres eventos: start (poso el dedo), move (lo arrastro), end
+   (lo levanto). Mientras drawing=true, cada move añade un punto
+   al array y redibuja.
+   ============================================================ */
+function onDrawStart(evt) {
+  evt.preventDefault();
+  state.drawing = true;
+  state.outline = [getCanvasPoint(evt)];  // reinicio el contorno
+  redraw();
+}
+
+function onDrawMove(evt) {
+  if (!state.drawing) return;
+  evt.preventDefault();
+  state.outline.push(getCanvasPoint(evt));
+  redraw();
+}
+
+function onDrawEnd(evt) {
+  state.drawing = false;
+}
+
+
+/* ============================================================
+   GESTIÓN DE FASES (la máquina de estados)
+   ============================================================
+   Centralizo aquí qué se muestra y qué eventos están activos
+   en cada fase. Así no tengo lógica de UI dispersa por todo
+   el archivo.
+   ============================================================ */
+function setPhase(newPhase) {
+  state.phase = newPhase;
+
+  /* Reset de listeners: limpio todos y vuelvo a poner solo los
+     que tocan en esta fase. Evita listeners duplicados. */
+  canvas.removeEventListener('touchstart', onCalibrateTap);
+  canvas.removeEventListener('mousedown',  onCalibrateTap);
+  canvas.removeEventListener('touchstart', onDrawStart);
+  canvas.removeEventListener('mousemove',  onDrawMove);
+  canvas.removeEventListener('touchmove',  onDrawMove);
+  canvas.removeEventListener('mouseup',    onDrawEnd);
+  canvas.removeEventListener('touchend',   onDrawEnd);
+  canvas.removeEventListener('mousedown',  onDrawStart);
+
+  /* Botones: oculto todos por defecto y muestro los que tocan */
+  btnShoot.style.display  = 'none';
+  btnRetake.style.display = 'none';
+  btnUndo.style.display   = 'none';
+  btnNext.style.display   = 'none';
+  btnSave.style.display   = 'none';
+
+  if (newPhase === 'camera') {
+    hint.textContent = 'Apunta la cámara al daño con el flexómetro visible';
+    btnShoot.style.display = 'block';
+    video.style.display = 'block';
+    canvas.style.display = 'none';
+    state.calibPoints = [];
+    state.outline = [];
+    state.mmPerPixel = null;
+    startCamera();
+  }
+
+  else if (newPhase === 'calibrate') {
+    hint.textContent = 'Toca dos puntos en el flexómetro (marca y siguiente marca)';
+    btnRetake.style.display = 'block';
+    /* Listeners de calibración */
+    canvas.addEventListener('touchstart', onCalibrateTap, { passive: false });
+    canvas.addEventListener('mousedown',  onCalibrateTap);
+    redraw();
+  }
+
+  else if (newPhase === 'draw') {
+    const factor = state.mmPerPixel.toFixed(4);
+    hint.textContent = `Escala: ${factor} mm/px. Dibuja el contorno del daño.`;
+    btnRetake.style.display = 'block';
+    btnUndo.style.display = 'block';
+    btnSave.style.display = 'block';
+    /* Listeners de dibujo */
+    canvas.addEventListener('touchstart', onDrawStart, { passive: false });
+    canvas.addEventListener('touchmove',  onDrawMove,  { passive: false });
+    canvas.addEventListener('touchend',   onDrawEnd);
+    canvas.addEventListener('mousedown',  onDrawStart);
+    canvas.addEventListener('mousemove',  onDrawMove);
+    canvas.addEventListener('mouseup',    onDrawEnd);
+    redraw();
+  }
+}
+
+
+/* ============================================================
+   BOTONES
+   ============================================================ */
+btnShoot.addEventListener('click', takePhoto);
+
+btnRetake.addEventListener('click', () => {
+  /* Volver al principio: liberar memoria de la foto anterior */
+  state.photo = null;
+  setPhase('camera');
+});
+
+btnUndo.addEventListener('click', () => {
+  state.outline = [];
+  redraw();
+});
+
+btnSave.addEventListener('click', () => {
+  /* Exportar el canvas tal cual está: foto + marcas + contorno.
+     Lo descargamos como JPEG. En móvil, esto abre el diálogo de
+     "guardar imagen" o la añade a la galería según el dispositivo. */
+  const link = document.createElement('a');
+  link.download = `dano-${Date.now()}.jpg`;
+  link.href = canvas.toDataURL('image/jpeg', 0.92);
+  link.click();
+});
+
+document.getElementById('modal-ok').addEventListener('click', confirmCalibration);
+document.getElementById('modal-cancel').addEventListener('click', () => {
+  modal.classList.remove('show');
+  state.calibPoints = [];
+  redraw();
+});
+
+
+/* ============================================================
+   ARRANQUE
+   ============================================================ */
+setPhase('camera');
+</script>
+</body>
+</html>
