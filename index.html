@@ -69,6 +69,7 @@
     button.secondary { background: #444; }
     button.danger    { background: #c0392b; }
     button.success   { background: #27ae60; }
+    button.primary   { background: #27ae60; font-size: 15px; }
     button.icon      { flex: 0 0 auto; min-width: 0; padding: 14px 12px; }
 
     #hint {
@@ -158,17 +159,19 @@
       align-items: center;
       justify-content: center;
       z-index: 30;
+      padding: 16px;
     }
     .modal.show { display: flex; }
     .modal .box {
       background: #222;
       padding: 24px;
       border-radius: 12px;
-      width: 90%;
-      max-width: 320px;
+      width: 100%;
+      max-width: 360px;
     }
-    .modal h3 { margin-bottom: 12px; }
-    .modal p  { font-size: 14px; color: #aaa; }
+    .modal h3 { margin-bottom: 12px; font-size: 18px; }
+    .modal p  { font-size: 14px; color: #ccc; line-height: 1.5; margin-bottom: 8px; }
+    .modal p.muted { color: #888; font-size: 13px; }
     .modal input {
       width: 100%;
       padding: 12px;
@@ -179,7 +182,19 @@
       color: #fff;
       margin: 12px 0;
     }
-    .modal .buttons { display: flex; gap: 8px; }
+    .modal .buttons { display: flex; gap: 8px; margin-top: 16px; }
+    .modal ol { margin-left: 20px; margin-bottom: 8px; color: #ccc; font-size: 14px; line-height: 1.6; }
+
+    /* Highlight box inside modals to draw the eye to key info */
+    .modal .highlight {
+      background: rgba(255,235,59,0.12);
+      border-left: 3px solid #ffeb3b;
+      padding: 10px 14px;
+      border-radius: 4px;
+      margin: 12px 0;
+      font-size: 14px;
+      color: #fff;
+    }
 
     #panel {
       position: fixed;
@@ -263,7 +278,7 @@
       </div>
     </div>
     <canvas id="canvas" style="display:none"></canvas>
-    <div id="hint" style="display:none">Point the camera at the damage with the ruler visible</div>
+    <div id="hint" style="display:none"></div>
     <div id="scale-badge"></div>
     <button id="fab-fit" title="Fit to screen">1:1</button>
   </div>
@@ -271,9 +286,10 @@
   <div id="controls" style="display:none">
     <button id="btn-retake-camera"  class="secondary icon" title="New photo (camera)">📷</button>
     <button id="btn-retake-gallery" class="secondary icon" title="New photo (gallery)">🖼</button>
-    <button id="btn-confirm-point"  class="success"   style="display:none">✓ Confirm</button>
-    <button id="btn-confirm-meas"   class="success"   style="display:none">✓ Close measurement</button>
+    <button id="btn-confirm-point"  class="success"   style="display:none">✓ Confirm point</button>
+    <button id="btn-confirm-meas"   class="success"   style="display:none">✓ Close dimension</button>
     <button id="btn-cancel-meas"    class="secondary" style="display:none">Cancel</button>
+    <button id="btn-add-dim"        class="primary"   style="display:none">➕ Add dimension</button>
     <button id="btn-list"           class="secondary" style="display:none">📋 List</button>
     <button id="btn-clean"          class="secondary icon" style="display:none" title="Clean mode">👁</button>
     <button id="btn-save"           style="display:none">💾 Save</button>
@@ -284,16 +300,45 @@
 <button id="fab-exit-clean">✕</button>
 
 <!--
-  Two inputs: the key difference is the "capture" attribute.
-  With capture="environment" the OS opens the native camera.
+  Two inputs: with capture="environment" the OS opens the native camera.
   Without it, the user can pick from gallery / files / camera.
 -->
 <input type="file" id="file-camera"  accept="image/*" capture="environment" style="display:none">
 <input type="file" id="file-gallery" accept="image/*" style="display:none">
 
+<!-- Onboarding modal shown right after a photo is loaded -->
+<div id="modal-onboard" class="modal">
+  <div class="box">
+    <h3>Step 1 — Set the reference scale</h3>
+    <p>To convert pixels into real millimeters, the app needs a known distance in your photo.</p>
+    <div class="highlight">
+      Place two points on a known feature (a ruler interval, a rivet pitch, a coin diameter) and tell the app how many mm separate them.
+    </div>
+    <p class="muted">Tip: pinch / use mouse wheel to zoom for accurate placement.</p>
+    <div class="buttons">
+      <button id="onboard-ok" class="success">Got it, let's start</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal shown when the scale has been successfully set -->
+<div id="modal-scale-set" class="modal">
+  <div class="box">
+    <h3>✓ Reference scale set</h3>
+    <p id="scale-set-text"></p>
+    <div class="highlight">
+      Tap <strong>➕ Add dimension</strong> whenever you want to measure a distance. You can add as many dimensions as you need.
+    </div>
+    <div class="buttons">
+      <button id="scale-set-ok" class="success">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- Calibration value modal -->
 <div id="modal-calib" class="modal">
   <div class="box">
-    <h3>Calibration</h3>
+    <h3>Reference distance</h3>
     <p>How many millimeters between the two yellow points?</p>
     <input id="mm-input" type="number" inputmode="decimal" placeholder="e.g. 100" />
     <div class="buttons">
@@ -303,10 +348,11 @@
   </div>
 </div>
 
+<!-- Rename dimension modal -->
 <div id="modal-rename" class="modal">
   <div class="box">
-    <h3>Rename measurement</h3>
-    <input id="rename-input" type="text" placeholder="Measurement name" maxlength="30" />
+    <h3>Rename dimension</h3>
+    <input id="rename-input" type="text" placeholder="Dimension name" maxlength="30" />
     <div class="buttons">
       <button id="rename-cancel" class="secondary">Cancel</button>
       <button id="rename-ok">Accept</button>
@@ -317,11 +363,11 @@
 <div id="panel-backdrop"></div>
 <div id="panel">
   <header>
-    <h3>Measurements</h3>
+    <h3>Dimensions</h3>
     <button id="panel-close">✕</button>
   </header>
   <div id="panel-list">
-    <div id="panel-empty">No measurements yet</div>
+    <div id="panel-empty">No dimensions yet</div>
   </div>
 </div>
 
@@ -330,28 +376,29 @@
    STATE
    ============================================================
    Phases:
-     'init'         welcome screen
-     'calib-1'      placing first reference point
-     'calib-1-set'  point placed, awaiting confirmation
-     'calib-2'      placing second reference point
-     'calib-2-set'  point placed, awaiting confirmation
-     'measure-idle' no measurement in progress
-     'measure-1'    first point placed, awaiting confirmation
-     'measure-2-empty'  awaiting second point tap
-     'measure-2'    second point placed, awaiting close
+     'init'             welcome screen, no photo
+     'calib-1'          place first reference point
+     'calib-1-set'      point placed, awaiting confirm
+     'calib-2'          place second reference point
+     'calib-2-set'      point placed, awaiting confirm
+     'measure-idle'     scale is set, NO active dimension.
+                        Canvas is read-only (only zoom/pan work).
+                        User must tap "Add dimension" to start one.
+     'measure-1-empty'  user just tapped Add dimension, awaiting
+                        first tap on canvas
+     'measure-1'        first point placed, awaiting confirm
+     'measure-2-empty'  awaiting second tap
+     'measure-2'        second point placed, awaiting close
 
-   Why so many phases now: every point gets confirmation.
-   "placing" = no point yet for this step.
-   "set"     = point on screen, waiting for the user to confirm
-               (or tap again to reposition).
+   The key change vs previous version: idle is now truly idle.
+   Tapping the image does nothing in 'measure-idle'. To start a
+   new dimension you have to press the Add dimension button.
    ============================================================ */
 const state = {
   phase: 'init',
   photo: null,
 
-  /* Zoom and pan. Transform:
-       visibleX = imgX * scale + offsetX
-       imgX     = (visibleX - offsetX) / scale  */
+  /* Zoom and pan */
   scale: 1,
   offsetX: 0,
   offsetY: 0,
@@ -365,15 +412,15 @@ const state = {
   isPanning: false,
   touchStartTime: 0,
   touchStartPos: null,
-  mouseDown: false,    // for desktop pan tracking
+  mouseDown: false,
 
-  /* Measurement data */
+  /* Data */
   calibPoints: [],
   mmPerPixel: null,
-  measurements: [],
+  dimensions: [],          // [{id, name, a, b, mm, hidden}]
   pendingA: null,
   pendingB: null,
-  measureCounter: 0,
+  dimCounter: 0,
   renamingId: null
 };
 
@@ -395,16 +442,19 @@ const btnRetakeGallery = document.getElementById('btn-retake-gallery');
 const btnConfirmPoint  = document.getElementById('btn-confirm-point');
 const btnConfirmMeas   = document.getElementById('btn-confirm-meas');
 const btnCancelMeas    = document.getElementById('btn-cancel-meas');
+const btnAddDim        = document.getElementById('btn-add-dim');
 const btnList          = document.getElementById('btn-list');
 const btnClean         = document.getElementById('btn-clean');
 const btnSave          = document.getElementById('btn-save');
 const btnShare         = document.getElementById('btn-share');
 const fabExitClean     = document.getElementById('fab-exit-clean');
 
-const modalCalib   = document.getElementById('modal-calib');
-const modalRename  = document.getElementById('modal-rename');
-const mmInput      = document.getElementById('mm-input');
-const renameInput  = document.getElementById('rename-input');
+const modalOnboard  = document.getElementById('modal-onboard');
+const modalScaleSet = document.getElementById('modal-scale-set');
+const modalCalib    = document.getElementById('modal-calib');
+const modalRename   = document.getElementById('modal-rename');
+const mmInput       = document.getElementById('mm-input');
+const renameInput   = document.getElementById('rename-input');
 
 const panel         = document.getElementById('panel');
 const panelBackdrop = document.getElementById('panel-backdrop');
@@ -438,13 +488,15 @@ function loadPhotoFromFile(file) {
       canvas.width  = img.naturalWidth;
       canvas.height = img.naturalHeight;
       state.calibPoints = [];
-      state.measurements = [];
+      state.dimensions = [];
       state.mmPerPixel = null;
       state.pendingA = null;
       state.pendingB = null;
-      state.measureCounter = 0;
+      state.dimCounter = 0;
       resetZoom();
+      /* Show onboarding then go to calib-1 */
       setPhase('calib-1');
+      showOnboardModal();
     };
     img.src = e.target.result;
   };
@@ -467,8 +519,6 @@ function updateFabFit() {
     state.scale > 1.01 || state.offsetX !== 0 || state.offsetY !== 0);
 }
 
-/* Zoom around a canvas point: that point stays visually fixed
-   while everything else scales around it (like Google Maps). */
 function zoomAt(cx, cy, newScale) {
   newScale = Math.max(1, Math.min(8, newScale));
   const imgX = (cx - state.offsetX) / state.scale;
@@ -513,30 +563,14 @@ function getImagePoint(clientX, clientY) {
 
 /* ============================================================
    DRAWING
-   ============================================================
-   Cross size is now proportional to image dimensions so it
-   looks right on any photo resolution. We also divide by scale
-   so the visual size stays constant regardless of zoom.
    ============================================================ */
-
-/* Base size in image pixels, before zoom compensation.
-   For a 4000px wide image: 4000 * 0.012 = 48 px cross.
-   For a 1000px wide image: 1000 * 0.012 = 20 px (minimum). */
-function baseCrossSize() {
-  return Math.max(20, canvas.width * 0.012);
-}
-function baseStroke() {
-  return Math.max(5, canvas.width * 0.003);
-}
-function baseFontSize() {
-  return Math.max(28, canvas.width * 0.022);
-}
+function baseCrossSize() { return Math.max(20, canvas.width * 0.012); }
+function baseStroke()    { return Math.max(5,  canvas.width * 0.003); }
+function baseFontSize()  { return Math.max(28, canvas.width * 0.022); }
 
 function redraw() {
   if (!state.photo) return;
 
-  /* Reset transform: without this, transforms accumulate on
-     each redraw and the image would grow without bound. */
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#000';
@@ -546,7 +580,6 @@ function redraw() {
                    state.offsetX, state.offsetY);
   ctx.drawImage(state.photo, 0, 0);
 
-  /* Divide visual sizes by scale to keep them constant in screen px */
   const k = 1 / state.scale;
   const crossSize = baseCrossSize() * k;
   const stroke    = baseStroke() * k;
@@ -559,11 +592,11 @@ function redraw() {
     drawLine(a, b, '#ffeb3b', stroke);
     if (state.mmPerPixel) {
       const mm = Math.hypot(b.x - a.x, b.y - a.y) * state.mmPerPixel;
-      drawLabel(a, b, `ref: ${mm.toFixed(1)} mm`, '#ffeb3b', fontSize, k);
+      drawLabel(a, b, `Reference: ${mm.toFixed(1)} mm`, '#ffeb3b', fontSize, k);
     }
   }
 
-  state.measurements.forEach(m => {
+  state.dimensions.forEach(m => {
     if (m.hidden) return;
     drawCross(m.a.x, m.a.y, '#e53935', crossSize, stroke);
     drawCross(m.b.x, m.b.y, '#e53935', crossSize, stroke);
@@ -623,7 +656,7 @@ function drawLabel(a, b, text, color, fontSize, k) {
 
 
 /* ============================================================
-   TOUCH INPUT (mobile)
+   TOUCH INPUT
    ============================================================ */
 const TAP_THRESHOLD_PX = 10;
 const TAP_MAX_MS = 500;
@@ -704,11 +737,6 @@ function onTouchEnd(evt) {
 
 /* ============================================================
    MOUSE INPUT (desktop)
-   ============================================================
-   Three behaviors:
-   - click (down + up without movement) → tap to place point
-   - drag (down + move + up) when zoomed → pan
-   - wheel → zoom around cursor
    ============================================================ */
 function onMouseDown(evt) {
   evt.preventDefault();
@@ -749,8 +777,6 @@ function onMouseUp(evt) {
   handleTap(getImagePoint(evt.clientX, evt.clientY));
 }
 
-/* Wheel zoom: each notch multiplies scale by ~1.1.
-   deltaY < 0 = wheel up = zoom in. */
 function onWheel(evt) {
   evt.preventDefault();
   const c = getCanvasCoord(evt.clientX, evt.clientY);
@@ -763,9 +789,9 @@ function onWheel(evt) {
 /* ============================================================
    TAP HANDLER
    ============================================================
-   A tap either places a NEW point (moving to a "-set" phase
-   that requires confirmation) or REPOSITIONS the current point
-   if we're already in a "-set" phase.
+   Note: in 'measure-idle' a tap does NOTHING. The user must
+   press "Add dimension" to enter 'measure-1-empty' where taps
+   start placing points.
    ============================================================ */
 function handleTap(imgPoint) {
   if (state.phase === 'calib-1') {
@@ -784,7 +810,7 @@ function handleTap(imgPoint) {
     state.calibPoints[1] = imgPoint;
     redraw();
   }
-  else if (state.phase === 'measure-idle') {
+  else if (state.phase === 'measure-1-empty') {
     state.pendingA = imgPoint;
     setPhase('measure-1');
   }
@@ -800,6 +826,7 @@ function handleTap(imgPoint) {
     state.pendingB = imgPoint;
     redraw();
   }
+  /* measure-idle and init: deliberately do nothing on tap */
 }
 
 
@@ -809,6 +836,17 @@ function handleTap(imgPoint) {
 fabFit.addEventListener('click', () => { resetZoom(); redraw(); });
 btnClean.addEventListener('click', () => document.body.classList.add('clean'));
 fabExitClean.addEventListener('click', () => document.body.classList.remove('clean'));
+
+
+/* ============================================================
+   ONBOARDING MODAL
+   ============================================================ */
+function showOnboardModal() {
+  modalOnboard.classList.add('show');
+}
+document.getElementById('onboard-ok').addEventListener('click', () => {
+  modalOnboard.classList.remove('show');
+});
 
 
 /* ============================================================
@@ -828,25 +866,32 @@ function confirmCalibration() {
   state.mmPerPixel = mm / pixels;
   modalCalib.classList.remove('show');
   setPhase('measure-idle');
+  /* Show the "scale set" modal as a clear transition cue */
+  document.getElementById('scale-set-text').textContent =
+    `Scale: ${state.mmPerPixel.toFixed(3)} mm/pixel.`;
+  modalScaleSet.classList.add('show');
 }
+document.getElementById('scale-set-ok').addEventListener('click', () => {
+  modalScaleSet.classList.remove('show');
+});
 
 
 /* ============================================================
-   MEASUREMENTS PANEL
+   DIMENSIONS PANEL
    ============================================================ */
 function openPanel() { renderPanelList(); panel.classList.add('show'); panelBackdrop.classList.add('show'); }
 function closePanel() { panel.classList.remove('show'); panelBackdrop.classList.remove('show'); }
 
 function renderPanelList() {
   panelList.innerHTML = '';
-  if (state.measurements.length === 0) {
+  if (state.dimensions.length === 0) {
     const empty = document.createElement('div');
     empty.id = 'panel-empty';
-    empty.textContent = 'No measurements yet';
+    empty.textContent = 'No dimensions yet';
     panelList.appendChild(empty);
     return;
   }
-  state.measurements.forEach(m => {
+  state.dimensions.forEach(m => {
     const item = document.createElement('div');
     item.className = 'item' + (m.hidden ? ' hidden' : '');
     item.innerHTML = `
@@ -875,7 +920,7 @@ panelList.addEventListener('click', (e) => {
   if (!btn) return;
   const id  = parseFloat(btn.dataset.id);
   const act = btn.dataset.act;
-  const m   = state.measurements.find(x => x.id === id);
+  const m   = state.dimensions.find(x => x.id === id);
   if (!m) return;
 
   if (act === 'toggle') {
@@ -886,7 +931,7 @@ panelList.addEventListener('click', (e) => {
   }
   else if (act === 'delete') {
     if (confirm(`Delete "${m.name}"?`)) {
-      state.measurements = state.measurements.filter(x => x.id !== id);
+      state.dimensions = state.dimensions.filter(x => x.id !== id);
       renderPanelList();
       redraw();
       updateHint();
@@ -924,7 +969,7 @@ function exportImage(callback) {
 btnSave.addEventListener('click', () => {
   exportImage(() => {
     const link = document.createElement('a');
-    link.download = `measurements-${Date.now()}.jpg`;
+    link.download = `dimensions-${Date.now()}.jpg`;
     link.href = canvas.toDataURL('image/jpeg', 0.92);
     link.click();
   });
@@ -933,11 +978,11 @@ btnSave.addEventListener('click', () => {
 btnShare.addEventListener('click', () => {
   exportImage(() => {
     canvas.toBlob(async (blob) => {
-      const filename = `measurements-${Date.now()}.jpg`;
+      const filename = `dimensions-${Date.now()}.jpg`;
       const file = new File([blob], filename, { type: 'image/jpeg' });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
-          await navigator.share({ files: [file], title: 'Measurements', text: 'Damage documentation' });
+          await navigator.share({ files: [file], title: 'Dimensions', text: 'Damage documentation' });
         } catch (err) { /* cancelled */ }
       } else {
         const link = document.createElement('a');
@@ -994,7 +1039,7 @@ function setPhase(newPhase) {
 
 function updateButtons() {
   [btnRetakeCamera, btnRetakeGallery, btnConfirmPoint, btnConfirmMeas,
-   btnCancelMeas, btnList, btnClean, btnSave, btnShare]
+   btnCancelMeas, btnAddDim, btnList, btnClean, btnSave, btnShare]
     .forEach(b => b.style.display = 'none');
 
   if (state.phase === 'init') return;
@@ -1002,16 +1047,21 @@ function updateButtons() {
   btnRetakeCamera.style.display = 'block';
   btnRetakeGallery.style.display = 'block';
 
-  /* Confirm button only appears in "-set" phases:
-     point has been placed, waiting for user OK. */
   if (state.phase === 'calib-1-set' || state.phase === 'calib-2-set') {
     btnConfirmPoint.style.display = 'block';
   }
   else if (state.phase === 'measure-idle') {
+    /* Idle: scale is set, no dimension active.
+       Primary action is "Add dimension". */
+    btnAddDim.style.display = 'block';
     btnList.style.display = 'block';
     btnClean.style.display = 'block';
     btnSave.style.display = 'block';
     btnShare.style.display = 'block';
+  }
+  else if (state.phase === 'measure-1-empty') {
+    /* Waiting for first tap. Cancel is the only option until tap happens. */
+    btnCancelMeas.style.display = 'block';
   }
   else if (state.phase === 'measure-1') {
     btnConfirmPoint.style.display = 'block';
@@ -1028,27 +1078,42 @@ function updateButtons() {
 
 function updateHint() {
   if (state.phase === 'calib-1') {
-    hint.textContent = 'Tap the first point on the ruler. Pinch to zoom.';
+    hint.textContent = 'Tap the first reference point. Pinch / wheel to zoom for accuracy.';
   } else if (state.phase === 'calib-1-set') {
-    hint.textContent = 'Tap to reposition, or confirm if the point is correct.';
+    hint.textContent = 'Tap to reposition, or confirm the first point.';
   } else if (state.phase === 'calib-2') {
-    hint.textContent = 'Tap the second point on the ruler.';
+    hint.textContent = 'Tap the second reference point.';
   } else if (state.phase === 'calib-2-set') {
     hint.textContent = 'Tap to reposition, or confirm to set the scale.';
   } else if (state.phase === 'measure-idle') {
-    const visible = state.measurements.filter(m => !m.hidden).length;
-    const total = state.measurements.length;
-    if (total === 0) hint.textContent = 'Tap two points to measure. Pinch to zoom.';
-    else if (visible === total) hint.textContent = `${total} measurement${total > 1 ? 's' : ''}. Tap to add another.`;
-    else hint.textContent = `${visible}/${total} visible. Tap to add another.`;
+    const visible = state.dimensions.filter(m => !m.hidden).length;
+    const total = state.dimensions.length;
+    if (total === 0) hint.textContent = 'Scale is set. Tap "Add dimension" to start measuring.';
+    else if (visible === total) hint.textContent = `${total} dimension${total > 1 ? 's' : ''} placed. Tap "Add dimension" to add another.`;
+    else hint.textContent = `${visible}/${total} visible. Tap "Add dimension" to add another.`;
+  } else if (state.phase === 'measure-1-empty') {
+    hint.textContent = 'Tap the first endpoint of the dimension.';
   } else if (state.phase === 'measure-1') {
-    hint.textContent = 'Tap to reposition the first point, or confirm.';
+    hint.textContent = 'Tap to reposition the first endpoint, or confirm.';
   } else if (state.phase === 'measure-2-empty') {
-    hint.textContent = 'Tap the second point.';
+    hint.textContent = 'Tap the second endpoint.';
   } else if (state.phase === 'measure-2') {
-    hint.textContent = 'Tap to reposition the second point, or close the measurement.';
+    hint.textContent = 'Tap to reposition the second endpoint, or close the dimension.';
   }
 }
+
+
+/* ============================================================
+   ADD DIMENSION BUTTON
+   ============================================================
+   This is the new entry point to dimension placement. From
+   measure-idle, the user MUST press this to start measuring.
+   ============================================================ */
+btnAddDim.addEventListener('click', () => {
+  state.pendingA = null;
+  state.pendingB = null;
+  setPhase('measure-1-empty');
+});
 
 
 /* ============================================================
@@ -1072,10 +1137,10 @@ btnConfirmMeas.addEventListener('click', () => {
   const b = state.pendingB;
   const pixels = Math.hypot(b.x - a.x, b.y - a.y);
   const mm = pixels * state.mmPerPixel;
-  state.measureCounter++;
-  state.measurements.push({
+  state.dimCounter++;
+  state.dimensions.push({
     id: Date.now() + Math.random(),
-    name: `Measurement ${state.measureCounter}`,
+    name: `Dim ${state.dimCounter}`,
     a, b, mm,
     hidden: false
   });
@@ -1103,7 +1168,7 @@ document.getElementById('calib-cancel').addEventListener('click', () => {
 document.getElementById('rename-ok').addEventListener('click', () => {
   const newName = renameInput.value.trim();
   if (!newName) { alert('Name cannot be empty'); return; }
-  const m = state.measurements.find(x => x.id === state.renamingId);
+  const m = state.dimensions.find(x => x.id === state.renamingId);
   if (m) m.name = newName;
   modalRename.classList.remove('show');
   state.renamingId = null;
