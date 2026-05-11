@@ -86,6 +86,11 @@
       z-index: 5;
     }
 
+    /*
+      Scale badge is now a clickable element (was a passive label).
+      It still shows the scale, but tapping it opens the
+      "Edit reference" modal.
+    */
     #scale-badge {
       position: absolute;
       bottom: 12px;
@@ -93,12 +98,18 @@
       padding: 6px 12px;
       background: rgba(255,235,59,0.9);
       color: #000;
+      border: none;
       border-radius: 16px;
       font-size: 12px;
       font-weight: 700;
       display: none;
-      pointer-events: none;
-      z-index: 5;
+      cursor: pointer;
+      z-index: 6;
+    }
+    #scale-badge::after {
+      content: ' ✏️';
+      font-size: 11px;
+      opacity: 0.7;
     }
 
     #fab-fit {
@@ -182,13 +193,23 @@
       color: #fff;
       margin: 12px 0;
     }
-    .modal .buttons { display: flex; gap: 8px; margin-top: 16px; }
+    .modal .buttons { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+    .modal .buttons.column { flex-direction: column; }
+    .modal .buttons.column button { width: 100%; }
     .modal ol { margin-left: 20px; margin-bottom: 8px; color: #ccc; font-size: 14px; line-height: 1.6; }
 
-    /* Highlight box inside modals to draw the eye to key info */
     .modal .highlight {
       background: rgba(255,235,59,0.12);
       border-left: 3px solid #ffeb3b;
+      padding: 10px 14px;
+      border-radius: 4px;
+      margin: 12px 0;
+      font-size: 14px;
+      color: #fff;
+    }
+    .modal .warning {
+      background: rgba(192,57,43,0.15);
+      border-left: 3px solid #c0392b;
       padding: 10px 14px;
       border-radius: 4px;
       margin: 12px 0;
@@ -279,11 +300,12 @@
     </div>
     <canvas id="canvas" style="display:none"></canvas>
     <div id="hint" style="display:none"></div>
-    <div id="scale-badge"></div>
+    <button id="scale-badge"></button>
     <button id="fab-fit" title="Fit to screen">1:1</button>
   </div>
 
   <div id="controls" style="display:none">
+    <button id="btn-new-project"    class="secondary icon" title="Start new project">🔄</button>
     <button id="btn-retake-camera"  class="secondary icon" title="New photo (camera)">📷</button>
     <button id="btn-retake-gallery" class="secondary icon" title="New photo (gallery)">🖼</button>
     <button id="btn-confirm-point"  class="success"   style="display:none">✓ Confirm point</button>
@@ -299,14 +321,10 @@
 
 <button id="fab-exit-clean">✕</button>
 
-<!--
-  Two inputs: with capture="environment" the OS opens the native camera.
-  Without it, the user can pick from gallery / files / camera.
--->
 <input type="file" id="file-camera"  accept="image/*" capture="environment" style="display:none">
 <input type="file" id="file-gallery" accept="image/*" style="display:none">
 
-<!-- Onboarding modal shown right after a photo is loaded -->
+<!-- Onboarding modal -->
 <div id="modal-onboard" class="modal">
   <div class="box">
     <h3>Step 1 — Set the reference scale</h3>
@@ -321,7 +339,7 @@
   </div>
 </div>
 
-<!-- Modal shown when the scale has been successfully set -->
+<!-- "Scale set" modal -->
 <div id="modal-scale-set" class="modal">
   <div class="box">
     <h3>✓ Reference scale set</h3>
@@ -335,15 +353,29 @@
   </div>
 </div>
 
-<!-- Calibration value modal -->
+<!-- Calibration value modal (used for initial setting AND editing) -->
 <div id="modal-calib" class="modal">
   <div class="box">
-    <h3>Reference distance</h3>
+    <h3 id="calib-modal-title">Reference distance</h3>
     <p>How many millimeters between the two yellow points?</p>
     <input id="mm-input" type="number" inputmode="decimal" placeholder="e.g. 100" />
     <div class="buttons">
       <button id="calib-cancel" class="secondary">Cancel</button>
       <button id="calib-ok">Accept</button>
+    </div>
+  </div>
+</div>
+
+<!-- "Edit reference" choice modal: opened from the scale badge -->
+<div id="modal-edit-ref" class="modal">
+  <div class="box">
+    <h3>Edit reference</h3>
+    <p>You can change the reference value or re-pick the two reference points on the image.</p>
+    <p class="muted">Existing dimensions will be re-calculated automatically with the new scale.</p>
+    <div class="buttons column">
+      <button id="edit-ref-value">Edit reference value (mm)</button>
+      <button id="edit-ref-points" class="secondary">Re-pick reference points</button>
+      <button id="edit-ref-cancel" class="secondary">Cancel</button>
     </div>
   </div>
 </div>
@@ -356,6 +388,21 @@
     <div class="buttons">
       <button id="rename-cancel" class="secondary">Cancel</button>
       <button id="rename-ok">Accept</button>
+    </div>
+  </div>
+</div>
+
+<!-- "Start new" confirmation modal -->
+<div id="modal-new-project" class="modal">
+  <div class="box">
+    <h3>Start a new project?</h3>
+    <div class="warning">
+      The current photo and all dimensions will be discarded. This cannot be undone.
+    </div>
+    <p class="muted">If you want to keep this work, save or share it before continuing.</p>
+    <div class="buttons">
+      <button id="new-cancel" class="secondary">Cancel</button>
+      <button id="new-confirm" class="danger">Yes, start new</button>
     </div>
   </div>
 </div>
@@ -374,36 +421,15 @@
 <script>
 /* ============================================================
    STATE
-   ============================================================
-   Phases:
-     'init'             welcome screen, no photo
-     'calib-1'          place first reference point
-     'calib-1-set'      point placed, awaiting confirm
-     'calib-2'          place second reference point
-     'calib-2-set'      point placed, awaiting confirm
-     'measure-idle'     scale is set, NO active dimension.
-                        Canvas is read-only (only zoom/pan work).
-                        User must tap "Add dimension" to start one.
-     'measure-1-empty'  user just tapped Add dimension, awaiting
-                        first tap on canvas
-     'measure-1'        first point placed, awaiting confirm
-     'measure-2-empty'  awaiting second tap
-     'measure-2'        second point placed, awaiting close
-
-   The key change vs previous version: idle is now truly idle.
-   Tapping the image does nothing in 'measure-idle'. To start a
-   new dimension you have to press the Add dimension button.
    ============================================================ */
 const state = {
   phase: 'init',
   photo: null,
 
-  /* Zoom and pan */
   scale: 1,
   offsetX: 0,
   offsetY: 0,
 
-  /* Gesture tracking */
   pinchStartDist: 0,
   pinchStartScale: 1,
   pinchCenter: null,
@@ -414,14 +440,19 @@ const state = {
   touchStartPos: null,
   mouseDown: false,
 
-  /* Data */
   calibPoints: [],
   mmPerPixel: null,
-  dimensions: [],          // [{id, name, a, b, mm, hidden}]
+  dimensions: [],
   pendingA: null,
   pendingB: null,
   dimCounter: 0,
-  renamingId: null
+  renamingId: null,
+
+  /* When true, the calibration modal is being used to EDIT
+     an existing reference (not to set it for the first time).
+     This changes the behavior on confirm: don't go to
+     measure-idle, just close and stay in measure-idle. */
+  editingReference: false
 };
 
 const welcome = document.getElementById('welcome');
@@ -437,6 +468,7 @@ const fileGallery = document.getElementById('file-gallery');
 
 const btnPickCamera    = document.getElementById('btn-pick-camera');
 const btnPickGallery   = document.getElementById('btn-pick-gallery');
+const btnNewProject    = document.getElementById('btn-new-project');
 const btnRetakeCamera  = document.getElementById('btn-retake-camera');
 const btnRetakeGallery = document.getElementById('btn-retake-gallery');
 const btnConfirmPoint  = document.getElementById('btn-confirm-point');
@@ -449,12 +481,14 @@ const btnSave          = document.getElementById('btn-save');
 const btnShare         = document.getElementById('btn-share');
 const fabExitClean     = document.getElementById('fab-exit-clean');
 
-const modalOnboard  = document.getElementById('modal-onboard');
-const modalScaleSet = document.getElementById('modal-scale-set');
-const modalCalib    = document.getElementById('modal-calib');
-const modalRename   = document.getElementById('modal-rename');
-const mmInput       = document.getElementById('mm-input');
-const renameInput   = document.getElementById('rename-input');
+const modalOnboard    = document.getElementById('modal-onboard');
+const modalScaleSet   = document.getElementById('modal-scale-set');
+const modalCalib      = document.getElementById('modal-calib');
+const modalEditRef    = document.getElementById('modal-edit-ref');
+const modalRename     = document.getElementById('modal-rename');
+const modalNewProject = document.getElementById('modal-new-project');
+const mmInput         = document.getElementById('mm-input');
+const renameInput     = document.getElementById('rename-input');
 
 const panel         = document.getElementById('panel');
 const panelBackdrop = document.getElementById('panel-backdrop');
@@ -494,7 +528,6 @@ function loadPhotoFromFile(file) {
       state.pendingB = null;
       state.dimCounter = 0;
       resetZoom();
-      /* Show onboarding then go to calib-1 */
       setPhase('calib-1');
       showOnboardModal();
     };
@@ -508,17 +541,13 @@ function loadPhotoFromFile(file) {
    ZOOM AND PAN
    ============================================================ */
 function resetZoom() {
-  state.scale = 1;
-  state.offsetX = 0;
-  state.offsetY = 0;
+  state.scale = 1; state.offsetX = 0; state.offsetY = 0;
   updateFabFit();
 }
-
 function updateFabFit() {
   fabFit.classList.toggle('show',
     state.scale > 1.01 || state.offsetX !== 0 || state.offsetY !== 0);
 }
-
 function zoomAt(cx, cy, newScale) {
   newScale = Math.max(1, Math.min(8, newScale));
   const imgX = (cx - state.offsetX) / state.scale;
@@ -526,10 +555,8 @@ function zoomAt(cx, cy, newScale) {
   state.scale = newScale;
   state.offsetX = cx - imgX * state.scale;
   state.offsetY = cy - imgY * state.scale;
-  clampOffset();
-  updateFabFit();
+  clampOffset(); updateFabFit();
 }
-
 function clampOffset() {
   if (!state.photo) return;
   const maxOffX = 0;
@@ -551,7 +578,6 @@ function getCanvasCoord(clientX, clientY) {
     y: (clientY - rect.top)  * (canvas.height / rect.height)
   };
 }
-
 function getImagePoint(clientX, clientY) {
   const c = getCanvasCoord(clientX, clientY);
   return {
@@ -570,14 +596,11 @@ function baseFontSize()  { return Math.max(28, canvas.width * 0.022); }
 
 function redraw() {
   if (!state.photo) return;
-
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.setTransform(state.scale, 0, 0, state.scale,
-                   state.offsetX, state.offsetY);
+  ctx.setTransform(state.scale, 0, 0, state.scale, state.offsetX, state.offsetY);
   ctx.drawImage(state.photo, 0, 0);
 
   const k = 1 / state.scale;
@@ -586,7 +609,6 @@ function redraw() {
   const fontSize  = baseFontSize() * k;
 
   state.calibPoints.forEach(p => drawCross(p.x, p.y, '#ffeb3b', crossSize, stroke));
-
   if (state.calibPoints.length === 2) {
     const [a, b] = state.calibPoints;
     drawLine(a, b, '#ffeb3b', stroke);
@@ -619,7 +641,6 @@ function drawCross(x, y, color, size, stroke) {
   ctx.moveTo(x, y - size); ctx.lineTo(x, y + size);
   ctx.stroke();
 }
-
 function drawLine(a, b, color, width) {
   ctx.strokeStyle = color;
   ctx.lineWidth = width;
@@ -628,24 +649,19 @@ function drawLine(a, b, color, width) {
   ctx.lineTo(b.x, b.y);
   ctx.stroke();
 }
-
 function drawLabel(a, b, text, color, fontSize, k) {
   const midX = (a.x + b.x) / 2;
   const midY = (a.y + b.y) / 2;
   ctx.font = `bold ${fontSize}px sans-serif`;
-
   const metrics = ctx.measureText(text);
   const padX = 10 * k, padY = 6 * k;
   const w = metrics.width + padX * 2;
   const h = fontSize + padY * 2;
-
   ctx.fillStyle = 'rgba(0,0,0,0.75)';
   ctx.fillRect(midX - w / 2, midY - h / 2, w, h);
-
   ctx.strokeStyle = color;
   ctx.lineWidth = 2 * k;
   ctx.strokeRect(midX - w / 2, midY - h / 2, w, h);
-
   ctx.fillStyle = color;
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'center';
@@ -656,7 +672,7 @@ function drawLabel(a, b, text, color, fontSize, k) {
 
 
 /* ============================================================
-   TOUCH INPUT
+   TOUCH/MOUSE INPUT
    ============================================================ */
 const TAP_THRESHOLD_PX = 10;
 const TAP_MAX_MS = 500;
@@ -664,34 +680,26 @@ const TAP_MAX_MS = 500;
 function onTouchStart(evt) {
   evt.preventDefault();
   if (evt.touches.length === 2) {
-    state.isPinching = true;
-    state.isPanning = false;
+    state.isPinching = true; state.isPanning = false;
     const t1 = evt.touches[0], t2 = evt.touches[1];
     state.pinchStartDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
     state.pinchStartScale = state.scale;
-    state.pinchCenter = getCanvasCoord((t1.clientX + t2.clientX) / 2,
-                                       (t1.clientY + t2.clientY) / 2);
+    state.pinchCenter = getCanvasCoord((t1.clientX + t2.clientX) / 2, (t1.clientY + t2.clientY) / 2);
   }
   else if (evt.touches.length === 1) {
-    state.isPinching = false;
-    state.isPanning = false;
+    state.isPinching = false; state.isPanning = false;
     const t = evt.touches[0];
     state.touchStartTime = Date.now();
     state.touchStartPos = { x: t.clientX, y: t.clientY };
-    state.panStart = {
-      x: t.clientX, y: t.clientY,
-      offsetX: state.offsetX, offsetY: state.offsetY
-    };
+    state.panStart = { x: t.clientX, y: t.clientY, offsetX: state.offsetX, offsetY: state.offsetY };
   }
 }
-
 function onTouchMove(evt) {
   evt.preventDefault();
   if (evt.touches.length === 2 && state.isPinching) {
     const t1 = evt.touches[0], t2 = evt.touches[1];
     const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
-    const ratio = dist / state.pinchStartDist;
-    zoomAt(state.pinchCenter.x, state.pinchCenter.y, state.pinchStartScale * ratio);
+    zoomAt(state.pinchCenter.x, state.pinchCenter.y, state.pinchStartScale * (dist / state.pinchStartDist));
     redraw();
   }
   else if (evt.touches.length === 1 && !state.isPinching) {
@@ -703,12 +711,10 @@ function onTouchMove(evt) {
       const rect = canvas.getBoundingClientRect();
       state.offsetX = state.panStart.offsetX + dx * (canvas.width  / rect.width);
       state.offsetY = state.panStart.offsetY + dy * (canvas.height / rect.height);
-      clampOffset();
-      redraw();
+      clampOffset(); redraw();
     }
   }
 }
-
 function onTouchEnd(evt) {
   if (state.isPinching && evt.touches.length < 2) {
     state.isPinching = false;
@@ -716,40 +722,25 @@ function onTouchEnd(evt) {
       const t = evt.touches[0];
       state.touchStartTime = Date.now();
       state.touchStartPos = { x: t.clientX, y: t.clientY };
-      state.panStart = {
-        x: t.clientX, y: t.clientY,
-        offsetX: state.offsetX, offsetY: state.offsetY
-      };
+      state.panStart = { x: t.clientX, y: t.clientY, offsetX: state.offsetX, offsetY: state.offsetY };
     }
     return;
   }
-
   if (evt.touches.length === 0 && !state.isPanning && !state.isPinching) {
     const dt = Date.now() - state.touchStartTime;
     if (dt > TAP_MAX_MS) return;
     const t = evt.changedTouches[0];
     handleTap(getImagePoint(t.clientX, t.clientY));
   }
-
   state.isPanning = false;
 }
-
-
-/* ============================================================
-   MOUSE INPUT (desktop)
-   ============================================================ */
 function onMouseDown(evt) {
   evt.preventDefault();
-  state.mouseDown = true;
-  state.isPanning = false;
+  state.mouseDown = true; state.isPanning = false;
   state.touchStartTime = Date.now();
   state.touchStartPos = { x: evt.clientX, y: evt.clientY };
-  state.panStart = {
-    x: evt.clientX, y: evt.clientY,
-    offsetX: state.offsetX, offsetY: state.offsetY
-  };
+  state.panStart = { x: evt.clientX, y: evt.clientY, offsetX: state.offsetX, offsetY: state.offsetY };
 }
-
 function onMouseMove(evt) {
   if (!state.mouseDown) return;
   const dx = evt.clientX - state.touchStartPos.x;
@@ -759,74 +750,54 @@ function onMouseMove(evt) {
     const rect = canvas.getBoundingClientRect();
     state.offsetX = state.panStart.offsetX + dx * (canvas.width  / rect.width);
     state.offsetY = state.panStart.offsetY + dy * (canvas.height / rect.height);
-    clampOffset();
-    redraw();
+    clampOffset(); redraw();
   }
 }
-
 function onMouseUp(evt) {
   if (!state.mouseDown) return;
   state.mouseDown = false;
-  if (state.isPanning) {
-    state.isPanning = false;
-    return;
-  }
+  if (state.isPanning) { state.isPanning = false; return; }
   const dx = evt.clientX - state.touchStartPos.x;
   const dy = evt.clientY - state.touchStartPos.y;
   if (Math.hypot(dx, dy) > TAP_THRESHOLD_PX) return;
   handleTap(getImagePoint(evt.clientX, evt.clientY));
 }
-
 function onWheel(evt) {
   evt.preventDefault();
   const c = getCanvasCoord(evt.clientX, evt.clientY);
   const factor = evt.deltaY < 0 ? 1.15 : 1 / 1.15;
-  zoomAt(c.x, c.y, state.scale * factor);
-  redraw();
+  zoomAt(c.x, c.y, state.scale * factor); redraw();
 }
 
 
 /* ============================================================
    TAP HANDLER
-   ============================================================
-   Note: in 'measure-idle' a tap does NOTHING. The user must
-   press "Add dimension" to enter 'measure-1-empty' where taps
-   start placing points.
    ============================================================ */
 function handleTap(imgPoint) {
   if (state.phase === 'calib-1') {
-    state.calibPoints[0] = imgPoint;
-    setPhase('calib-1-set');
+    state.calibPoints[0] = imgPoint; setPhase('calib-1-set');
   }
   else if (state.phase === 'calib-1-set') {
-    state.calibPoints[0] = imgPoint;
-    redraw();
+    state.calibPoints[0] = imgPoint; redraw();
   }
   else if (state.phase === 'calib-2') {
-    state.calibPoints[1] = imgPoint;
-    setPhase('calib-2-set');
+    state.calibPoints[1] = imgPoint; setPhase('calib-2-set');
   }
   else if (state.phase === 'calib-2-set') {
-    state.calibPoints[1] = imgPoint;
-    redraw();
+    state.calibPoints[1] = imgPoint; redraw();
   }
   else if (state.phase === 'measure-1-empty') {
-    state.pendingA = imgPoint;
-    setPhase('measure-1');
+    state.pendingA = imgPoint; setPhase('measure-1');
   }
   else if (state.phase === 'measure-1') {
-    state.pendingA = imgPoint;
-    redraw();
+    state.pendingA = imgPoint; redraw();
   }
   else if (state.phase === 'measure-2-empty') {
-    state.pendingB = imgPoint;
-    setPhase('measure-2');
+    state.pendingB = imgPoint; setPhase('measure-2');
   }
   else if (state.phase === 'measure-2') {
-    state.pendingB = imgPoint;
-    redraw();
+    state.pendingB = imgPoint; redraw();
   }
-  /* measure-idle and init: deliberately do nothing on tap */
 }
 
 
@@ -839,40 +810,136 @@ fabExitClean.addEventListener('click', () => document.body.classList.remove('cle
 
 
 /* ============================================================
-   ONBOARDING MODAL
+   ONBOARDING
    ============================================================ */
-function showOnboardModal() {
-  modalOnboard.classList.add('show');
-}
+function showOnboardModal() { modalOnboard.classList.add('show'); }
 document.getElementById('onboard-ok').addEventListener('click', () => {
   modalOnboard.classList.remove('show');
+});
+document.getElementById('scale-set-ok').addEventListener('click', () => {
+  modalScaleSet.classList.remove('show');
 });
 
 
 /* ============================================================
    CALIBRATION
+   ============================================================
+   Two scenarios use this modal:
+   1. First time setting the scale (after picking ref points)
+   2. Editing the reference value while keeping the same points
+   The "editingReference" flag distinguishes them.
    ============================================================ */
-function openCalibModal() {
+function openCalibModal(forEditing = false) {
+  state.editingReference = forEditing;
+  document.getElementById('calib-modal-title').textContent =
+    forEditing ? 'Edit reference value' : 'Reference distance';
+
+  /* If editing, prefill with current value */
+  if (forEditing && state.mmPerPixel) {
+    const [a, b] = state.calibPoints;
+    const pixels = Math.hypot(b.x - a.x, b.y - a.y);
+    mmInput.value = (pixels * state.mmPerPixel).toFixed(2);
+  } else {
+    mmInput.value = '';
+  }
   modalCalib.classList.add('show');
-  mmInput.value = '';
-  setTimeout(() => mmInput.focus(), 100);
+  setTimeout(() => { mmInput.focus(); mmInput.select(); }, 100);
 }
 
 function confirmCalibration() {
   const mm = parseFloat(mmInput.value);
   if (!mm || mm <= 0) { alert('Enter a valid number in mm'); return; }
+
   const [a, b] = state.calibPoints;
   const pixels = Math.hypot(b.x - a.x, b.y - a.y);
-  state.mmPerPixel = mm / pixels;
+  const newMmPerPixel = mm / pixels;
+
+  /* If we are EDITING, the dimensions stored in mm need to be
+     recalculated. Their pixel distance hasn't changed, only the
+     conversion factor. So we recompute mm = pixels * newScale.
+     We saved them with their pixel positions (a, b), so this is
+     a direct recalculation. */
+  if (state.editingReference && state.dimensions.length > 0) {
+    state.dimensions.forEach(d => {
+      const px = Math.hypot(d.b.x - d.a.x, d.b.y - d.a.y);
+      d.mm = px * newMmPerPixel;
+    });
+    renderPanelList();
+  }
+
+  state.mmPerPixel = newMmPerPixel;
   modalCalib.classList.remove('show');
-  setPhase('measure-idle');
-  /* Show the "scale set" modal as a clear transition cue */
-  document.getElementById('scale-set-text').textContent =
-    `Scale: ${state.mmPerPixel.toFixed(3)} mm/pixel.`;
-  modalScaleSet.classList.add('show');
+
+  if (state.editingReference) {
+    /* Stay where we were, just refresh the canvas */
+    state.editingReference = false;
+    setPhase('measure-idle');
+  } else {
+    /* First time: show the "scale set" celebration modal */
+    setPhase('measure-idle');
+    document.getElementById('scale-set-text').textContent =
+      `Scale: ${state.mmPerPixel.toFixed(3)} mm/pixel.`;
+    modalScaleSet.classList.add('show');
+  }
 }
-document.getElementById('scale-set-ok').addEventListener('click', () => {
-  modalScaleSet.classList.remove('show');
+
+
+/* ============================================================
+   EDIT REFERENCE FLOW
+   ============================================================
+   The scale badge (bottom-left) is now a button. Tapping it
+   opens the "Edit reference" choice modal with two options:
+   - Edit just the value (mm)
+   - Re-pick the two reference points
+   ============================================================ */
+badge.addEventListener('click', () => {
+  if (state.mmPerPixel) modalEditRef.classList.add('show');
+});
+
+document.getElementById('edit-ref-value').addEventListener('click', () => {
+  modalEditRef.classList.remove('show');
+  openCalibModal(true);
+});
+
+document.getElementById('edit-ref-points').addEventListener('click', () => {
+  modalEditRef.classList.remove('show');
+  /* Wipe reference points but keep dimensions and photo.
+     Dimensions will be recalculated when calibration completes. */
+  state.calibPoints = [];
+  state.editingReference = true;
+  /* Save the OLD mmPerPixel? No: we recalculate from scratch
+     because the points themselves are being re-picked, which
+     means we know the new pixels and we'll ask for the new mm. */
+  setPhase('calib-1');
+});
+
+document.getElementById('edit-ref-cancel').addEventListener('click', () => {
+  modalEditRef.classList.remove('show');
+});
+
+
+/* ============================================================
+   "START NEW" FLOW
+   ============================================================ */
+btnNewProject.addEventListener('click', () => {
+  modalNewProject.classList.add('show');
+});
+document.getElementById('new-cancel').addEventListener('click', () => {
+  modalNewProject.classList.remove('show');
+});
+document.getElementById('new-confirm').addEventListener('click', () => {
+  modalNewProject.classList.remove('show');
+  /* Full reset */
+  state.photo = null;
+  state.calibPoints = [];
+  state.dimensions = [];
+  state.mmPerPixel = null;
+  state.pendingA = null;
+  state.pendingB = null;
+  state.dimCounter = 0;
+  state.editingReference = false;
+  resetZoom();
+  setPhase('init');
 });
 
 
@@ -908,7 +975,6 @@ function renderPanelList() {
     panelList.appendChild(item);
   });
 }
-
 function escapeHtml(s) {
   return s.replace(/[&<>"']/g, c => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -922,19 +988,14 @@ panelList.addEventListener('click', (e) => {
   const act = btn.dataset.act;
   const m   = state.dimensions.find(x => x.id === id);
   if (!m) return;
-
   if (act === 'toggle') {
     m.hidden = !m.hidden;
-    renderPanelList();
-    redraw();
-    updateHint();
+    renderPanelList(); redraw(); updateHint();
   }
   else if (act === 'delete') {
     if (confirm(`Delete "${m.name}"?`)) {
       state.dimensions = state.dimensions.filter(x => x.id !== id);
-      renderPanelList();
-      redraw();
-      updateHint();
+      renderPanelList(); redraw(); updateHint();
     }
   }
   else if (act === 'rename') {
@@ -953,17 +1014,10 @@ panelBackdrop.addEventListener('click', closePanel);
    SAVE / SHARE
    ============================================================ */
 function exportImage(callback) {
-  const savedScale = state.scale;
-  const savedOffX  = state.offsetX;
-  const savedOffY  = state.offsetY;
-  resetZoom();
-  redraw();
-  callback();
-  state.scale = savedScale;
-  state.offsetX = savedOffX;
-  state.offsetY = savedOffY;
-  updateFabFit();
-  redraw();
+  const savedScale = state.scale, savedOffX = state.offsetX, savedOffY = state.offsetY;
+  resetZoom(); redraw(); callback();
+  state.scale = savedScale; state.offsetX = savedOffX; state.offsetY = savedOffY;
+  updateFabFit(); redraw();
 }
 
 btnSave.addEventListener('click', () => {
@@ -974,16 +1028,14 @@ btnSave.addEventListener('click', () => {
     link.click();
   });
 });
-
 btnShare.addEventListener('click', () => {
   exportImage(() => {
     canvas.toBlob(async (blob) => {
       const filename = `dimensions-${Date.now()}.jpg`;
       const file = new File([blob], filename, { type: 'image/jpeg' });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        try {
-          await navigator.share({ files: [file], title: 'Dimensions', text: 'Damage documentation' });
-        } catch (err) { /* cancelled */ }
+        try { await navigator.share({ files: [file], title: 'Dimensions', text: 'Damage documentation' }); }
+        catch (err) { /* cancelled */ }
       } else {
         const link = document.createElement('a');
         link.download = filename;
@@ -1001,7 +1053,6 @@ btnShare.addEventListener('click', () => {
    ============================================================ */
 function setPhase(newPhase) {
   state.phase = newPhase;
-
   canvas.removeEventListener('touchstart', onTouchStart);
   canvas.removeEventListener('touchmove',  onTouchMove);
   canvas.removeEventListener('touchend',   onTouchEnd);
@@ -1026,7 +1077,7 @@ function setPhase(newPhase) {
   controls.style.display= (newPhase === 'init') ? 'none'  : 'flex';
 
   if (state.mmPerPixel) {
-    badge.style.display = 'block';
+    badge.style.display = 'inline-flex';
     badge.textContent = `scale: ${state.mmPerPixel.toFixed(3)} mm/px`;
   } else {
     badge.style.display = 'none';
@@ -1038,12 +1089,13 @@ function setPhase(newPhase) {
 }
 
 function updateButtons() {
-  [btnRetakeCamera, btnRetakeGallery, btnConfirmPoint, btnConfirmMeas,
+  [btnNewProject, btnRetakeCamera, btnRetakeGallery, btnConfirmPoint, btnConfirmMeas,
    btnCancelMeas, btnAddDim, btnList, btnClean, btnSave, btnShare]
     .forEach(b => b.style.display = 'none');
 
   if (state.phase === 'init') return;
 
+  btnNewProject.style.display = 'block';
   btnRetakeCamera.style.display = 'block';
   btnRetakeGallery.style.display = 'block';
 
@@ -1051,8 +1103,6 @@ function updateButtons() {
     btnConfirmPoint.style.display = 'block';
   }
   else if (state.phase === 'measure-idle') {
-    /* Idle: scale is set, no dimension active.
-       Primary action is "Add dimension". */
     btnAddDim.style.display = 'block';
     btnList.style.display = 'block';
     btnClean.style.display = 'block';
@@ -1060,7 +1110,6 @@ function updateButtons() {
     btnShare.style.display = 'block';
   }
   else if (state.phase === 'measure-1-empty') {
-    /* Waiting for first tap. Cancel is the only option until tap happens. */
     btnCancelMeas.style.display = 'block';
   }
   else if (state.phase === 'measure-1') {
@@ -1078,7 +1127,9 @@ function updateButtons() {
 
 function updateHint() {
   if (state.phase === 'calib-1') {
-    hint.textContent = 'Tap the first reference point. Pinch / wheel to zoom for accuracy.';
+    hint.textContent = state.editingReference
+      ? 'Re-picking reference. Tap the first reference point.'
+      : 'Tap the first reference point. Pinch / wheel to zoom for accuracy.';
   } else if (state.phase === 'calib-1-set') {
     hint.textContent = 'Tap to reposition, or confirm the first point.';
   } else if (state.phase === 'calib-2') {
@@ -1104,37 +1155,22 @@ function updateHint() {
 
 
 /* ============================================================
-   ADD DIMENSION BUTTON
-   ============================================================
-   This is the new entry point to dimension placement. From
-   measure-idle, the user MUST press this to start measuring.
+   ADD DIMENSION + CONFIRMATIONS
    ============================================================ */
 btnAddDim.addEventListener('click', () => {
-  state.pendingA = null;
-  state.pendingB = null;
+  state.pendingA = null; state.pendingB = null;
   setPhase('measure-1-empty');
 });
 
-
-/* ============================================================
-   POINT CONFIRMATION
-   ============================================================ */
 btnConfirmPoint.addEventListener('click', () => {
-  if (state.phase === 'calib-1-set') {
-    setPhase('calib-2');
-  }
-  else if (state.phase === 'calib-2-set') {
-    openCalibModal();
-  }
-  else if (state.phase === 'measure-1') {
-    setPhase('measure-2-empty');
-  }
+  if (state.phase === 'calib-1-set') setPhase('calib-2');
+  else if (state.phase === 'calib-2-set') openCalibModal(state.editingReference);
+  else if (state.phase === 'measure-1') setPhase('measure-2-empty');
 });
 
 btnConfirmMeas.addEventListener('click', () => {
   if (!state.pendingA || !state.pendingB) return;
-  const a = state.pendingA;
-  const b = state.pendingB;
+  const a = state.pendingA, b = state.pendingB;
   const pixels = Math.hypot(b.x - a.x, b.y - a.y);
   const mm = pixels * state.mmPerPixel;
   state.dimCounter++;
@@ -1144,15 +1180,13 @@ btnConfirmMeas.addEventListener('click', () => {
     a, b, mm,
     hidden: false
   });
-  state.pendingA = null;
-  state.pendingB = null;
+  state.pendingA = null; state.pendingB = null;
   renderPanelList();
   setPhase('measure-idle');
 });
 
 btnCancelMeas.addEventListener('click', () => {
-  state.pendingA = null;
-  state.pendingB = null;
+  state.pendingA = null; state.pendingB = null;
   setPhase('measure-idle');
 });
 
@@ -1163,6 +1197,7 @@ btnCancelMeas.addEventListener('click', () => {
 document.getElementById('calib-ok').addEventListener('click', confirmCalibration);
 document.getElementById('calib-cancel').addEventListener('click', () => {
   modalCalib.classList.remove('show');
+  state.editingReference = false;
 });
 
 document.getElementById('rename-ok').addEventListener('click', () => {
@@ -1172,8 +1207,7 @@ document.getElementById('rename-ok').addEventListener('click', () => {
   if (m) m.name = newName;
   modalRename.classList.remove('show');
   state.renamingId = null;
-  renderPanelList();
-  redraw();
+  renderPanelList(); redraw();
 });
 document.getElementById('rename-cancel').addEventListener('click', () => {
   modalRename.classList.remove('show');
