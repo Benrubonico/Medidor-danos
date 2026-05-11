@@ -36,26 +36,31 @@
       justify-content: center;
     }
 
-    /*
-      CAMBIO CLAVE respecto a v1:
-      Antes el canvas se estiraba con object-fit: cover y recortaba.
-      Ahora le digo "ocupa lo que puedas dentro del stage pero
-      mantén tus proporciones". El navegador centra y deja bandas
-      negras si hace falta. Esto hace que cada píxel CSS del canvas
-      visible se corresponda 1:1 con un área del canvas interno,
-      y la regla de tres de getCanvasPoint vuelve a ser correcta.
-    */
-    #video, #canvas {
+    /* Canvas centrado, manteniendo proporciones sin recortar.
+       Esto es lo que garantiza que las coordenadas funcionen bien. */
+    #canvas {
       max-width: 100%;
       max-height: 100%;
       width: auto;
       height: auto;
       display: block;
     }
-    #canvas { display: none; }
+
+    /* Pantalla inicial cuando no hay foto todavía */
+    #welcome {
+      text-align: center;
+      padding: 32px;
+    }
+    #welcome h1 { font-size: 24px; margin-bottom: 12px; }
+    #welcome p  { color: #aaa; margin-bottom: 24px; line-height: 1.5; }
+    #welcome button {
+      padding: 16px 32px;
+      font-size: 16px;
+    }
 
     #controls {
       display: flex;
+      flex-wrap: wrap;
       gap: 8px;
       padding: 12px;
       background: #1a1a1a;
@@ -64,6 +69,7 @@
 
     button {
       flex: 1;
+      min-width: 80px;
       padding: 14px 8px;
       font-size: 14px;
       font-weight: 600;
@@ -76,6 +82,7 @@
     button.secondary { background: #444; }
     button.danger    { background: #c0392b; }
     button.success   { background: #27ae60; }
+    button.icon      { flex: 0 0 auto; min-width: 0; padding: 14px 12px; }
 
     #hint {
       position: absolute;
@@ -106,26 +113,60 @@
       z-index: 5;
     }
 
-    #modal {
+    /* Modo limpio: oculta todo lo que no es la imagen.
+       Aplicar la clase al body lo activa. */
+    body.clean #hint,
+    body.clean #scale-badge,
+    body.clean #controls,
+    body.clean #fab-clean {
+      display: none !important;
+    }
+    /* En modo limpio, mostramos un botón flotante para salir */
+    body.clean #fab-exit-clean { display: flex !important; }
+
+    /* Botón flotante para salir de modo limpio */
+    #fab-exit-clean {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      display: none;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: rgba(0,0,0,0.6);
+      border: 1px solid #555;
+      color: #fff;
+      font-size: 18px;
+      align-items: center;
+      justify-content: center;
+      z-index: 20;
+      cursor: pointer;
+      padding: 0;
+      min-width: 0;
+      flex: 0 0 auto;
+    }
+
+    /* Modal genérico (calibración y renombrar) */
+    .modal {
       position: fixed;
       inset: 0;
       background: rgba(0,0,0,0.85);
       display: none;
       align-items: center;
       justify-content: center;
-      z-index: 10;
+      z-index: 30;
     }
-    #modal.show { display: flex; }
-    #modal .box {
+    .modal.show { display: flex; }
+    .modal .box {
       background: #222;
       padding: 24px;
       border-radius: 12px;
       width: 90%;
       max-width: 320px;
     }
-    #modal h3 { margin-bottom: 12px; }
-    #modal p  { font-size: 14px; color: #aaa; }
-    #modal input {
+    .modal h3 { margin-bottom: 12px; }
+    .modal p  { font-size: 14px; color: #aaa; }
+    .modal input {
       width: 100%;
       padding: 12px;
       font-size: 16px;
@@ -135,39 +176,162 @@
       color: #fff;
       margin: 12px 0;
     }
-    #modal .buttons { display: flex; gap: 8px; }
+    .modal .buttons { display: flex; gap: 8px; }
+
+    /* Panel lateral de la lista de medidas */
+    #panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 85%;
+      max-width: 340px;
+      background: #1a1a1a;
+      border-left: 1px solid #333;
+      transform: translateX(100%);   /* fuera de pantalla por defecto */
+      transition: transform 0.25s ease-out;
+      z-index: 25;
+      display: flex;
+      flex-direction: column;
+    }
+    #panel.show { transform: translateX(0); }
+    #panel header {
+      padding: 16px;
+      border-bottom: 1px solid #333;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    #panel header h3 { font-size: 16px; }
+    #panel-close {
+      background: #333;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      font-size: 18px;
+      flex: 0 0 auto;
+      padding: 0;
+      min-width: 0;
+    }
+    #panel-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+    #panel-empty {
+      padding: 32px 16px;
+      text-align: center;
+      color: #666;
+      font-size: 14px;
+    }
+    .item {
+      background: #252525;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .item.hidden { opacity: 0.45; }
+    .item .name { font-weight: 600; font-size: 14px; }
+    .item .mm   { color: #e53935; font-weight: 700; font-size: 16px; }
+    .item .row  { display: flex; justify-content: space-between; align-items: center; }
+    .item .actions { display: flex; gap: 6px; }
+    .item .actions button {
+      flex: 0 0 auto;
+      min-width: 0;
+      padding: 8px 10px;
+      font-size: 13px;
+      background: #333;
+    }
+    .item .actions button.danger { background: #c0392b; }
+
+    /* Backdrop semitransparente que aparece detrás del panel */
+    #panel-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 24;
+      display: none;
+    }
+    #panel-backdrop.show { display: block; }
   </style>
 </head>
 <body>
 
 <div id="app">
   <div id="stage">
-    <video id="video" autoplay playsinline muted></video>
-    <canvas id="canvas"></canvas>
-    <div id="hint">Apunta la cámara al daño con el flexómetro visible</div>
+    <!-- Pantalla de bienvenida: se muestra cuando aún no hay foto -->
+    <div id="welcome">
+      <h1>Medidor de daños</h1>
+      <p>Toma una foto con el flexómetro visible para empezar</p>
+      <button id="btn-pick-photo">📷 Tomar foto</button>
+    </div>
+    <canvas id="canvas" style="display:none"></canvas>
+    <div id="hint" style="display:none">Apunta la cámara al daño con el flexómetro visible</div>
     <div id="scale-badge"></div>
   </div>
 
-  <div id="controls">
-    <button id="btn-shoot">📷 Capturar</button>
-    <button id="btn-retake"     class="secondary" style="display:none">↺ Nueva foto</button>
-    <button id="btn-redo-cal"   class="secondary" style="display:none">Rehacer puntos</button>
-    <button id="btn-confirm-cal" class="success"  style="display:none">✓ Confirmar</button>
-    <button id="btn-undo-meas"  class="secondary" style="display:none">Deshacer</button>
-    <button id="btn-clear-meas" class="secondary" style="display:none">Borrar todo</button>
-    <button id="btn-share"      style="display:none">📤 Compartir</button>
+  <div id="controls" style="display:none">
+    <!-- Botones de cada fase. Se muestran/ocultan desde JS. -->
+    <button id="btn-retake"      class="secondary">↺ Nueva foto</button>
+    <button id="btn-redo-point"  class="secondary" style="display:none">Rehacer punto</button>
+    <button id="btn-next-point"  class="success"   style="display:none">Siguiente</button>
+    <button id="btn-confirm-cal" class="success"   style="display:none">✓ Confirmar</button>
+    <button id="btn-list"        class="secondary" style="display:none">📋 Lista</button>
+    <button id="btn-clean"       class="secondary icon" style="display:none" title="Modo limpio">👁</button>
+    <button id="btn-save"        style="display:none">💾 Guardar</button>
+    <button id="btn-share"       style="display:none">📤 Compartir</button>
   </div>
 </div>
 
-<div id="modal">
+<!-- Botón flotante para salir del modo limpio -->
+<button id="fab-exit-clean">✕</button>
+
+<!--
+  Input de archivo invisible. Es el truco de la cámara nativa:
+  - accept="image/*" filtra a imágenes
+  - capture="environment" sugiere al móvil que abra la cámara
+    trasera directamente, en lugar del selector de galería.
+    En PC, se ignora y abre el selector de archivos normal.
+-->
+<input type="file" id="file-input" accept="image/*" capture="environment" style="display:none">
+
+<!-- Modal de calibración -->
+<div id="modal-calib" class="modal">
   <div class="box">
     <h3>Calibración</h3>
     <p>¿Cuántos milímetros hay entre los dos puntos amarillos?</p>
     <input id="mm-input" type="number" inputmode="decimal" placeholder="Ej: 100" />
     <div class="buttons">
-      <button id="modal-cancel" class="secondary">Cancelar</button>
-      <button id="modal-ok">Aceptar</button>
+      <button id="calib-cancel" class="secondary">Cancelar</button>
+      <button id="calib-ok">Aceptar</button>
     </div>
+  </div>
+</div>
+
+<!-- Modal de renombrar medida -->
+<div id="modal-rename" class="modal">
+  <div class="box">
+    <h3>Renombrar medida</h3>
+    <input id="rename-input" type="text" placeholder="Nombre de la medida" maxlength="30" />
+    <div class="buttons">
+      <button id="rename-cancel" class="secondary">Cancelar</button>
+      <button id="rename-ok">Aceptar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Panel lateral de medidas -->
+<div id="panel-backdrop"></div>
+<div id="panel">
+  <header>
+    <h3>Medidas</h3>
+    <button id="panel-close">✕</button>
+  </header>
+  <div id="panel-list">
+    <div id="panel-empty">No hay medidas todavía</div>
   </div>
 </div>
 
@@ -175,99 +339,102 @@
 /* ============================================================
    ESTADO
    ============================================================
-   Fases:
-     'camera'        cámara en vivo
-     'calibrate'     marcando los dos puntos de referencia
-     'calibrate-ok' (NUEVA)  puntos puestos, esperando confirmación
-                             para que el usuario vea si están bien
-     'measure'       midiendo pares de puntos libremente
+   Fases del flujo:
+     'init'        sin foto, mostrando pantalla de bienvenida
+     'calib-1'     marcando el primer punto del flexómetro
+     'calib-1-ok'  primer punto colocado, confirmando
+     'calib-2'     marcando el segundo punto
+     'calib-2-ok'  ambos colocados, confirmando para abrir modal
+     'measure'     midiendo pares de puntos
    ============================================================ */
 const state = {
-  phase: 'camera',
-  stream: null,
+  phase: 'init',
   photo: null,
-  calibPoints: [],
+  calibPoints: [],          // [{x,y}, {x,y}]
   mmPerPixel: null,
-  measurements: [],   // [{a, b, mm}, ...]
-  pendingPoint: null  // primer punto de una medida en curso
+  measurements: [],         // [{id, name, a, b, mm, hidden}]
+  pendingPoint: null,
+  measureCounter: 0,        // contador para nombres por defecto
+  renamingId: null          // id de la medida que se está renombrando
 };
 
-const video   = document.getElementById('video');
+/* DOM refs */
+const welcome = document.getElementById('welcome');
 const canvas  = document.getElementById('canvas');
 const ctx     = canvas.getContext('2d');
 const hint    = document.getElementById('hint');
-const modal   = document.getElementById('modal');
-const mmInput = document.getElementById('mm-input');
+const controls= document.getElementById('controls');
 const badge   = document.getElementById('scale-badge');
+const fileInput = document.getElementById('file-input');
 
-const btnShoot      = document.getElementById('btn-shoot');
-const btnRetake     = document.getElementById('btn-retake');
-const btnRedoCal    = document.getElementById('btn-redo-cal');
-const btnConfirmCal = document.getElementById('btn-confirm-cal');
-const btnUndoMeas   = document.getElementById('btn-undo-meas');
-const btnClearMeas  = document.getElementById('btn-clear-meas');
-const btnShare      = document.getElementById('btn-share');
+const btnPickPhoto   = document.getElementById('btn-pick-photo');
+const btnRetake      = document.getElementById('btn-retake');
+const btnRedoPoint   = document.getElementById('btn-redo-point');
+const btnNextPoint   = document.getElementById('btn-next-point');
+const btnConfirmCal  = document.getElementById('btn-confirm-cal');
+const btnList        = document.getElementById('btn-list');
+const btnClean       = document.getElementById('btn-clean');
+const btnSave        = document.getElementById('btn-save');
+const btnShare       = document.getElementById('btn-share');
+const fabExitClean   = document.getElementById('fab-exit-clean');
 
+const modalCalib   = document.getElementById('modal-calib');
+const modalRename  = document.getElementById('modal-rename');
+const mmInput      = document.getElementById('mm-input');
+const renameInput  = document.getElementById('rename-input');
 
-/* ============================================================
-   CÁMARA
-   ============================================================ */
-async function startCamera() {
-  try {
-    /* Pido alta resolución. Antes no lo pedía y por eso parecía
-       "zoom y sin enfocar": en realidad era resolución baja
-       (640x480) estirada hasta llenar la pantalla.
-       focusMode 'continuous' pide enfoque automático continuo;
-       si el móvil no lo soporta, lo ignora sin error. */
-    state.stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: 'environment' },
-        width:  { ideal: 1920 },
-        height: { ideal: 1080 },
-        focusMode: 'continuous'
-      },
-      audio: false
-    });
-    video.srcObject = state.stream;
-  } catch (err) {
-    hint.textContent = 'Error con la cámara: ' + err.message;
-  }
-}
-
-function stopCamera() {
-  if (state.stream) {
-    state.stream.getTracks().forEach(t => t.stop());
-    state.stream = null;
-  }
-  video.style.display = 'none';
-  canvas.style.display = 'block';
-}
+const panel         = document.getElementById('panel');
+const panelBackdrop = document.getElementById('panel-backdrop');
+const panelList     = document.getElementById('panel-list');
+const panelEmpty    = document.getElementById('panel-empty');
+const panelClose    = document.getElementById('panel-close');
 
 
 /* ============================================================
-   CAPTURA
+   CÁMARA NATIVA
+   ============================================================
+   Estrategia nueva: en vez de manejar yo el stream con
+   getUserMedia, abro el input file y dejo que el móvil use su
+   app de cámara. El usuario hace la foto allí (con todo el
+   procesamiento de imagen del fabricante) y me la entrega.
    ============================================================ */
-function takePhoto() {
-  canvas.width  = video.videoWidth;
-  canvas.height = video.videoHeight;
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+btnPickPhoto.addEventListener('click', () => fileInput.click());
+btnRetake.addEventListener('click', () => fileInput.click());
 
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-  state.photo = new Image();
-  state.photo.onload = () => {
-    stopCamera();
-    setPhase('calibrate');
+fileInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  loadPhotoFromFile(file);
+  /* Importante: reset del value. Si no, seleccionar la MISMA
+     foto otra vez no dispara el evento change. */
+  fileInput.value = '';
+});
+
+function loadPhotoFromFile(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      state.photo = img;
+      /* Ajusto el canvas a las dimensiones reales de la foto */
+      canvas.width  = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      /* Reseteo estado de medidas: foto nueva = empezar de cero */
+      state.calibPoints = [];
+      state.measurements = [];
+      state.mmPerPixel = null;
+      state.pendingPoint = null;
+      state.measureCounter = 0;
+      setPhase('calib-1');
+    };
+    img.src = e.target.result;
   };
-  state.photo.src = dataUrl;
+  reader.readAsDataURL(file);
 }
 
 
 /* ============================================================
    COORDENADAS
-   ============================================================
-   Con object-fit ya no recortando, esta función SÍ funciona bien.
-   rect = tamaño del canvas tal y como se ve, todo él corresponde
-   con el canvas interno → regla de tres correcta.
    ============================================================ */
 function getCanvasPoint(evt) {
   const t = evt.touches ? evt.touches[0] : evt;
@@ -289,7 +456,7 @@ function redraw() {
 
   ctx.drawImage(state.photo, 0, 0, canvas.width, canvas.height);
 
-  /* Calibración (amarillo) */
+  /* Calibración */
   state.calibPoints.forEach(p => drawCross(p.x, p.y, '#ffeb3b'));
   if (state.calibPoints.length === 2) {
     const [a, b] = state.calibPoints;
@@ -300,15 +467,16 @@ function redraw() {
     }
   }
 
-  /* Mediciones (rojo) con su distancia escrita */
+  /* Mediciones visibles */
   state.measurements.forEach(m => {
+    if (m.hidden) return;
     drawCross(m.a.x, m.a.y, '#e53935');
     drawCross(m.b.x, m.b.y, '#e53935');
     drawLine(m.a, m.b, '#e53935', 3);
-    drawLabel(m.a, m.b, `${m.mm.toFixed(1)} mm`, '#e53935');
+    drawLabel(m.a, m.b, `${m.name}: ${m.mm.toFixed(1)} mm`, '#e53935');
   });
 
-  /* Punto pendiente de cerrar pareja */
+  /* Punto pendiente */
   if (state.pendingPoint) {
     drawCross(state.pendingPoint.x, state.pendingPoint.y, '#e53935');
   }
@@ -333,13 +501,9 @@ function drawLine(a, b, color, width) {
   ctx.stroke();
 }
 
-/* Etiqueta en el punto medio con fondo para que sea legible
-   sobre cualquier color de fondo. */
 function drawLabel(a, b, text, color) {
   const midX = (a.x + b.x) / 2;
   const midY = (a.y + b.y) / 2;
-  /* Tamaño de fuente proporcional al canvas para que se vea
-     bien tanto en una foto pequeña como en una grande. */
   const fontSize = Math.max(22, canvas.width / 50);
   ctx.font = `bold ${fontSize}px sans-serif`;
 
@@ -348,7 +512,7 @@ function drawLabel(a, b, text, color) {
   const w = metrics.width + padX * 2;
   const h = fontSize + padY * 2;
 
-  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
   ctx.fillRect(midX - w / 2, midY - h / 2, w, h);
 
   ctx.strokeStyle = color;
@@ -366,19 +530,29 @@ function drawLabel(a, b, text, color) {
 
 
 /* ============================================================
-   CALIBRACIÓN CON VERIFICACIÓN
+   CALIBRACIÓN PASO A PASO
+   ============================================================
+   Nuevo flujo confirmación por punto:
+     calib-1     → toca punto 1 → calib-1-ok
+     calib-1-ok  → "Siguiente" → calib-2  (o "Rehacer" → calib-1)
+     calib-2     → toca punto 2 → calib-2-ok
+     calib-2-ok  → "Confirmar" abre modal mm  (o "Rehacer" → calib-2)
    ============================================================ */
-function onCalibrateTap(evt) {
+function onCalibTap(evt) {
   evt.preventDefault();
-  if (state.calibPoints.length >= 2) return;
-  state.calibPoints.push(getCanvasPoint(evt));
-  redraw();
-  /* No abro modal todavía: paso a fase de verificación */
-  if (state.calibPoints.length === 2) setPhase('calibrate-ok');
+  const p = getCanvasPoint(evt);
+
+  if (state.phase === 'calib-1') {
+    state.calibPoints = [p];
+    setPhase('calib-1-ok');
+  } else if (state.phase === 'calib-2') {
+    state.calibPoints[1] = p;
+    setPhase('calib-2-ok');
+  }
 }
 
 function openCalibModal() {
-  modal.classList.add('show');
+  modalCalib.classList.add('show');
   mmInput.value = '';
   setTimeout(() => mmInput.focus(), 100);
 }
@@ -392,120 +566,167 @@ function confirmCalibration() {
   const [a, b] = state.calibPoints;
   const pixels = Math.hypot(b.x - a.x, b.y - a.y);
   state.mmPerPixel = mm / pixels;
-  modal.classList.remove('show');
+  modalCalib.classList.remove('show');
   setPhase('measure');
 }
 
 
 /* ============================================================
-   MEDICIÓN PUNTO A PUNTO (tantas como quieras)
+   MEDICIÓN
    ============================================================ */
 function onMeasureTap(evt) {
   evt.preventDefault();
   const p = getCanvasPoint(evt);
 
   if (!state.pendingPoint) {
-    /* Primer toque de una medida nueva */
     state.pendingPoint = p;
   } else {
-    /* Segundo toque: cierro y guardo la medida */
     const a = state.pendingPoint;
     const b = p;
     const pixels = Math.hypot(b.x - a.x, b.y - a.y);
     const mm = pixels * state.mmPerPixel;
-    state.measurements.push({ a, b, mm });
+    state.measureCounter++;
+    state.measurements.push({
+      id: Date.now() + Math.random(),
+      name: `Medida ${state.measureCounter}`,
+      a, b, mm,
+      hidden: false
+    });
     state.pendingPoint = null;
+    renderPanelList();
   }
   redraw();
-  updateHintMeasure();
+  updateMeasureHint();
 }
 
-function updateHintMeasure() {
+function updateMeasureHint() {
   if (state.pendingPoint) {
     hint.textContent = 'Toca el segundo punto para cerrar la medida';
   } else {
-    const n = state.measurements.length;
-    hint.textContent = n === 0
-      ? 'Toca dos puntos para medir su distancia'
-      : `${n} medida${n > 1 ? 's' : ''}. Toca para añadir otra`;
+    const visible = state.measurements.filter(m => !m.hidden).length;
+    const total   = state.measurements.length;
+    if (total === 0) {
+      hint.textContent = 'Toca dos puntos para medir su distancia';
+    } else if (visible === total) {
+      hint.textContent = `${total} medida${total > 1 ? 's' : ''}. Toca para añadir otra`;
+    } else {
+      hint.textContent = `${visible}/${total} visibles. Toca para añadir otra`;
+    }
   }
 }
 
 
 /* ============================================================
-   MÁQUINA DE FASES
+   PANEL LATERAL DE MEDIDAS
    ============================================================ */
-function setPhase(newPhase) {
-  state.phase = newPhase;
-
-  /* Reset de listeners */
-  canvas.removeEventListener('touchstart', onCalibrateTap);
-  canvas.removeEventListener('mousedown',  onCalibrateTap);
-  canvas.removeEventListener('touchstart', onMeasureTap);
-  canvas.removeEventListener('mousedown',  onMeasureTap);
-
-  /* Oculto todos los botones */
-  [btnShoot, btnRetake, btnRedoCal, btnConfirmCal,
-   btnUndoMeas, btnClearMeas, btnShare].forEach(b => b.style.display = 'none');
-
-  /* Píldora con escala visible solo cuando ya calibramos */
-  if (state.mmPerPixel) {
-    badge.style.display = 'block';
-    badge.textContent = `escala: ${state.mmPerPixel.toFixed(3)} mm/px`;
-  } else {
-    badge.style.display = 'none';
-  }
-
-  if (newPhase === 'camera') {
-    hint.textContent = 'Apunta la cámara al daño con el flexómetro visible';
-    btnShoot.style.display = 'block';
-    video.style.display = 'block';
-    canvas.style.display = 'none';
-    state.calibPoints = [];
-    state.measurements = [];
-    state.mmPerPixel = null;
-    state.pendingPoint = null;
-    startCamera();
-  }
-
-  else if (newPhase === 'calibrate') {
-    hint.textContent = 'Toca dos puntos del flexómetro (marca 1, marca 2)';
-    btnRetake.style.display = 'block';
-    canvas.addEventListener('touchstart', onCalibrateTap, { passive: false });
-    canvas.addEventListener('mousedown',  onCalibrateTap);
-    redraw();
-  }
-
-  else if (newPhase === 'calibrate-ok') {
-    /* Fase nueva: el usuario verifica antes de meter el valor en mm */
-    hint.textContent = '¿Los puntos amarillos están bien colocados?';
-    btnRedoCal.style.display = 'block';
-    btnConfirmCal.style.display = 'block';
-    redraw();
-  }
-
-  else if (newPhase === 'measure') {
-    btnRetake.style.display = 'block';
-    btnUndoMeas.style.display = 'block';
-    btnClearMeas.style.display = 'block';
-    btnShare.style.display = 'block';
-    canvas.addEventListener('touchstart', onMeasureTap, { passive: false });
-    canvas.addEventListener('mousedown',  onMeasureTap);
-    updateHintMeasure();
-    redraw();
-  }
+function openPanel() {
+  renderPanelList();
+  panel.classList.add('show');
+  panelBackdrop.classList.add('show');
 }
+function closePanel() {
+  panel.classList.remove('show');
+  panelBackdrop.classList.remove('show');
+}
+
+function renderPanelList() {
+  /* Limpio la lista, conservando el placeholder de vacío */
+  panelList.innerHTML = '';
+
+  if (state.measurements.length === 0) {
+    const empty = document.createElement('div');
+    empty.id = 'panel-empty';
+    empty.textContent = 'No hay medidas todavía';
+    panelList.appendChild(empty);
+    return;
+  }
+
+  state.measurements.forEach(m => {
+    const item = document.createElement('div');
+    item.className = 'item' + (m.hidden ? ' hidden' : '');
+    item.innerHTML = `
+      <div class="row">
+        <span class="name">${escapeHtml(m.name)}</span>
+        <span class="mm">${m.mm.toFixed(1)} mm</span>
+      </div>
+      <div class="actions">
+        <button data-act="rename" data-id="${m.id}">✏️ Renombrar</button>
+        <button data-act="toggle" data-id="${m.id}">${m.hidden ? '👁 Mostrar' : '🚫 Ocultar'}</button>
+        <button data-act="delete" data-id="${m.id}" class="danger">🗑</button>
+      </div>
+    `;
+    panelList.appendChild(item);
+  });
+}
+
+/* Evito problemas con nombres que contengan caracteres HTML */
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+/* Delegación de eventos: un solo listener en el contenedor
+   gestiona todos los botones de los items. Más eficiente y
+   funciona con elementos que se añaden/quitan dinámicamente. */
+panelList.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-act]');
+  if (!btn) return;
+  const id  = parseFloat(btn.dataset.id);
+  const act = btn.dataset.act;
+  const m   = state.measurements.find(x => x.id === id);
+  if (!m) return;
+
+  if (act === 'toggle') {
+    m.hidden = !m.hidden;
+    renderPanelList();
+    redraw();
+    updateMeasureHint();
+  }
+  else if (act === 'delete') {
+    if (confirm(`¿Borrar "${m.name}"?`)) {
+      state.measurements = state.measurements.filter(x => x.id !== id);
+      renderPanelList();
+      redraw();
+      updateMeasureHint();
+    }
+  }
+  else if (act === 'rename') {
+    state.renamingId = id;
+    renameInput.value = m.name;
+    modalRename.classList.add('show');
+    setTimeout(() => { renameInput.focus(); renameInput.select(); }, 100);
+  }
+});
+
+panelClose.addEventListener('click', closePanel);
+panelBackdrop.addEventListener('click', closePanel);
 
 
 /* ============================================================
-   COMPARTIR (Web Share API)
+   MODO LIMPIO
+   ============================================================ */
+btnClean.addEventListener('click', () => document.body.classList.add('clean'));
+fabExitClean.addEventListener('click', () => document.body.classList.remove('clean'));
+
+
+/* ============================================================
+   GUARDAR / COMPARTIR
    ============================================================
-   Abre el menú nativo del móvil con todas las opciones: WhatsApp,
-   email, Drive, guardar en fotos, etc. Más limpio que descargar
-   forzosamente. Si el navegador no soporta compartir archivos,
-   caemos a descarga clásica.
+   Ambos exportan el mismo canvas (foto + medidas dibujadas).
+   La diferencia es solo el destino.
    ============================================================ */
+btnSave.addEventListener('click', () => {
+  /* Aseguro estado visual actualizado antes de exportar */
+  redraw();
+  const link = document.createElement('a');
+  link.download = `medidas-${Date.now()}.jpg`;
+  link.href = canvas.toDataURL('image/jpeg', 0.92);
+  link.click();
+});
+
 btnShare.addEventListener('click', () => {
+  redraw();
   canvas.toBlob(async (blob) => {
     const filename = `medidas-${Date.now()}.jpg`;
     const file = new File([blob], filename, { type: 'image/jpeg' });
@@ -517,10 +738,9 @@ btnShare.addEventListener('click', () => {
           title: 'Medidas',
           text: 'Documentación de daño'
         });
-      } catch (err) {
-        /* Cancelado por el usuario o error. No molesto con avisos. */
-      }
+      } catch (err) { /* cancelado, sin aviso */ }
     } else {
+      /* Fallback a descarga si el navegador no soporta compartir archivos */
       const link = document.createElement('a');
       link.download = filename;
       link.href = URL.createObjectURL(blob);
@@ -532,47 +752,149 @@ btnShare.addEventListener('click', () => {
 
 
 /* ============================================================
-   RESTO DE BOTONES
+   MÁQUINA DE FASES
    ============================================================ */
-btnShoot.addEventListener('click', takePhoto);
+function setPhase(newPhase) {
+  state.phase = newPhase;
 
-btnRetake.addEventListener('click', () => {
-  state.photo = null;
-  setPhase('camera');
+  /* Reset de listeners */
+  canvas.removeEventListener('touchstart', onCalibTap);
+  canvas.removeEventListener('mousedown',  onCalibTap);
+  canvas.removeEventListener('touchstart', onMeasureTap);
+  canvas.removeEventListener('mousedown',  onMeasureTap);
+
+  /* Oculto todos los botones contextuales */
+  [btnRetake, btnRedoPoint, btnNextPoint, btnConfirmCal,
+   btnList, btnClean, btnSave, btnShare].forEach(b => b.style.display = 'none');
+
+  /* Pantalla de bienvenida solo en init */
+  welcome.style.display = (newPhase === 'init') ? 'block' : 'none';
+  canvas.style.display  = (newPhase === 'init') ? 'none' : 'block';
+  hint.style.display    = (newPhase === 'init') ? 'none' : 'block';
+  controls.style.display= (newPhase === 'init') ? 'none' : 'flex';
+
+  /* Badge de escala */
+  if (state.mmPerPixel) {
+    badge.style.display = 'block';
+    badge.textContent = `escala: ${state.mmPerPixel.toFixed(3)} mm/px`;
+  } else {
+    badge.style.display = 'none';
+  }
+
+  if (newPhase === 'init') {
+    /* nada que hacer, welcome ya visible */
+  }
+
+  else if (newPhase === 'calib-1') {
+    hint.textContent = 'Toca el primer punto del flexómetro';
+    btnRetake.style.display = 'block';
+    canvas.addEventListener('touchstart', onCalibTap, { passive: false });
+    canvas.addEventListener('mousedown',  onCalibTap);
+    redraw();
+  }
+
+  else if (newPhase === 'calib-1-ok') {
+    hint.textContent = '¿El primer punto está bien colocado?';
+    btnRetake.style.display = 'block';
+    btnRedoPoint.style.display = 'block';
+    btnNextPoint.style.display = 'block';
+    redraw();
+  }
+
+  else if (newPhase === 'calib-2') {
+    hint.textContent = 'Toca el segundo punto del flexómetro';
+    btnRetake.style.display = 'block';
+    canvas.addEventListener('touchstart', onCalibTap, { passive: false });
+    canvas.addEventListener('mousedown',  onCalibTap);
+    redraw();
+  }
+
+  else if (newPhase === 'calib-2-ok') {
+    hint.textContent = '¿Los dos puntos están bien colocados?';
+    btnRetake.style.display = 'block';
+    btnRedoPoint.style.display = 'block';
+    btnConfirmCal.style.display = 'block';
+    redraw();
+  }
+
+  else if (newPhase === 'measure') {
+    btnRetake.style.display = 'block';
+    btnList.style.display = 'block';
+    btnClean.style.display = 'block';
+    btnSave.style.display = 'block';
+    btnShare.style.display = 'block';
+    canvas.addEventListener('touchstart', onMeasureTap, { passive: false });
+    canvas.addEventListener('mousedown',  onMeasureTap);
+    updateMeasureHint();
+    redraw();
+  }
+}
+
+
+/* ============================================================
+   BOTONES DE CALIBRACIÓN
+   ============================================================ */
+btnRedoPoint.addEventListener('click', () => {
+  /* Rehacer el último punto colocado */
+  if (state.phase === 'calib-1-ok') {
+    state.calibPoints = [];
+    setPhase('calib-1');
+  } else if (state.phase === 'calib-2-ok') {
+    state.calibPoints.pop();
+    setPhase('calib-2');
+  }
 });
 
-btnRedoCal.addEventListener('click', () => {
-  state.calibPoints = [];
-  setPhase('calibrate');
-});
-
+btnNextPoint.addEventListener('click', () => setPhase('calib-2'));
 btnConfirmCal.addEventListener('click', openCalibModal);
 
-btnUndoMeas.addEventListener('click', () => {
-  if (state.pendingPoint) state.pendingPoint = null;
-  else state.measurements.pop();
-  redraw();
-  updateHintMeasure();
+document.getElementById('calib-ok').addEventListener('click', confirmCalibration);
+document.getElementById('calib-cancel').addEventListener('click', () => {
+  modalCalib.classList.remove('show');
+  setPhase('calib-2-ok');
 });
 
-btnClearMeas.addEventListener('click', () => {
-  state.measurements = [];
-  state.pendingPoint = null;
+
+/* ============================================================
+   RENOMBRAR
+   ============================================================ */
+document.getElementById('rename-ok').addEventListener('click', () => {
+  const newName = renameInput.value.trim();
+  if (!newName) {
+    alert('El nombre no puede estar vacío');
+    return;
+  }
+  const m = state.measurements.find(x => x.id === state.renamingId);
+  if (m) m.name = newName;
+  modalRename.classList.remove('show');
+  state.renamingId = null;
+  renderPanelList();
   redraw();
-  updateHintMeasure();
+});
+document.getElementById('rename-cancel').addEventListener('click', () => {
+  modalRename.classList.remove('show');
+  state.renamingId = null;
 });
 
-document.getElementById('modal-ok').addEventListener('click', confirmCalibration);
-document.getElementById('modal-cancel').addEventListener('click', () => {
-  modal.classList.remove('show');
-  setPhase('calibrate-ok');
+/* Pulsar Enter en el input también acepta */
+renameInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('rename-ok').click();
 });
+mmInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('calib-ok').click();
+});
+
+
+/* ============================================================
+   LISTA
+   ============================================================ */
+btnList.addEventListener('click', openPanel);
 
 
 /* ============================================================
    ARRANQUE
    ============================================================ */
-setPhase('camera');
+setPhase('init');
 </script>
 </body>
 </html>
