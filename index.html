@@ -45,6 +45,70 @@
     #welcome .actions { display: flex; flex-direction: column; gap: 12px; align-items: center; }
     #welcome button { padding: 16px 32px; font-size: 16px; width: 220px; }
 
+    /* ============================================================
+       LOGIN SCREEN
+       Covers the entire app until authenticated.
+       Hidden via [hidden] attribute, not CSS class, so it's
+       semantically correct for screen readers too.
+       ============================================================ */
+    #login {
+      position: fixed;
+      inset: 0;
+      background: #111;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 20px;
+      flex-direction: column;
+      gap: 16px;
+    }
+    #login[hidden] { display: none; }
+    #login .box {
+      width: 100%;
+      max-width: 360px;
+      background: #222;
+      padding: 28px 24px;
+      border-radius: 12px;
+      text-align: center;
+    }
+    #login h1 { font-size: 22px; margin-bottom: 8px; }
+    #login p { color: #aaa; font-size: 14px; margin-bottom: 20px; }
+    #login input {
+      width: 100%;
+      padding: 14px;
+      font-size: 16px;
+      border-radius: 8px;
+      border: 1px solid #555;
+      background: #111;
+      color: #fff;
+      margin-bottom: 12px;
+      text-align: center;
+    }
+    #login button {
+      width: 100%;
+      padding: 14px;
+      font-size: 15px;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      background: #27ae60;
+      color: #fff;
+      cursor: pointer;
+    }
+    #login .error {
+      color: #e74c3c;
+      font-size: 13px;
+      margin-top: 12px;
+      min-height: 18px;
+    }
+    #login .info {
+      color: #666;
+      font-size: 11px;
+      margin-top: 20px;
+      line-height: 1.5;
+    }
+
     #controls {
       display: flex;
       flex-wrap: wrap;
@@ -86,11 +150,6 @@
       z-index: 5;
     }
 
-    /*
-      Scale badge is now a clickable element (was a passive label).
-      It still shows the scale, but tapping it opens the
-      "Edit reference" modal.
-    */
     #scale-badge {
       position: absolute;
       bottom: 12px;
@@ -106,11 +165,7 @@
       cursor: pointer;
       z-index: 6;
     }
-    #scale-badge::after {
-      content: ' ✏️';
-      font-size: 11px;
-      opacity: 0.7;
-    }
+    #scale-badge::after { content: ' ✏️'; font-size: 11px; opacity: 0.7; }
 
     #fab-fit {
       position: absolute;
@@ -196,8 +251,6 @@
     .modal .buttons { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
     .modal .buttons.column { flex-direction: column; }
     .modal .buttons.column button { width: 100%; }
-    .modal ol { margin-left: 20px; margin-bottom: 8px; color: #ccc; font-size: 14px; line-height: 1.6; }
-
     .modal .highlight {
       background: rgba(255,235,59,0.12);
       border-left: 3px solid #ffeb3b;
@@ -219,9 +272,7 @@
 
     #panel {
       position: fixed;
-      top: 0;
-      right: 0;
-      bottom: 0;
+      top: 0; right: 0; bottom: 0;
       width: 85%;
       max-width: 340px;
       background: #1a1a1a;
@@ -288,7 +339,24 @@
 </head>
 <body>
 
-<div id="app">
+<!-- ============================================================
+     LOGIN SCREEN
+     ============================================================
+     This is the first thing the user sees. The rest of the app
+     stays hidden via [hidden] attribute until they pass.
+     ============================================================ -->
+<div id="login">
+  <div class="box">
+    <h1>🔒 Restricted Access</h1>
+    <p>Enter the access password to use the tool</p>
+    <input id="login-input" type="password" autocomplete="off" placeholder="Password" />
+    <button id="login-button">Unlock</button>
+    <div class="error" id="login-error"></div>
+    <div class="info">For internal use only. Do not share the link or password.</div>
+  </div>
+</div>
+
+<div id="app" hidden>
   <div id="stage">
     <div id="welcome">
       <h1>Damage Measurement Tool</h1>
@@ -324,7 +392,6 @@
 <input type="file" id="file-camera"  accept="image/*" capture="environment" style="display:none">
 <input type="file" id="file-gallery" accept="image/*" style="display:none">
 
-<!-- Onboarding modal -->
 <div id="modal-onboard" class="modal">
   <div class="box">
     <h3>Step 1 — Set the reference scale</h3>
@@ -339,7 +406,6 @@
   </div>
 </div>
 
-<!-- "Scale set" modal -->
 <div id="modal-scale-set" class="modal">
   <div class="box">
     <h3>✓ Reference scale set</h3>
@@ -353,7 +419,6 @@
   </div>
 </div>
 
-<!-- Calibration value modal (used for initial setting AND editing) -->
 <div id="modal-calib" class="modal">
   <div class="box">
     <h3 id="calib-modal-title">Reference distance</h3>
@@ -366,7 +431,6 @@
   </div>
 </div>
 
-<!-- "Edit reference" choice modal: opened from the scale badge -->
 <div id="modal-edit-ref" class="modal">
   <div class="box">
     <h3>Edit reference</h3>
@@ -380,7 +444,6 @@
   </div>
 </div>
 
-<!-- Rename dimension modal -->
 <div id="modal-rename" class="modal">
   <div class="box">
     <h3>Rename dimension</h3>
@@ -392,7 +455,6 @@
   </div>
 </div>
 
-<!-- "Start new" confirmation modal -->
 <div id="modal-new-project" class="modal">
   <div class="box">
     <h3>Start a new project?</h3>
@@ -419,6 +481,142 @@
 </div>
 
 <script>
+/* ============================================================
+   AUTH / LOGIN
+   ============================================================
+   HOW TO CONFIGURE:
+
+   - AUTH_ENABLED: set to false to disable the password screen
+     entirely. The app will unlock immediately for everyone.
+     Set to true to require the password.
+
+   - REMEMBER_DAYS: how long (in days) the browser remembers a
+     successful login before asking again. 1 = 24h, 7 = a week,
+     1/24 = 1 hour, 0 = never remember (ask on every visit).
+
+   HOW TO CHANGE THE PASSWORD:
+
+   1. Go to any "SHA-256 generator" online, for example:
+      https://emn178.github.io/online-tools/sha256.html
+   2. Type your new password there and copy the resulting 64-char hash
+   3. Replace the PASSWORD_HASH value below with that hash
+   4. To invalidate everyone's existing logged-in session (force
+      them to re-enter the new password), also change AUTH_VERSION
+      to a different value (e.g. '2', '3'...)
+
+   Default password (so you can test immediately): accenture2026
+   Change it as soon as possible.
+
+   SECURITY DISCLAIMER:
+   This is a "thin lock", not real security. Anyone determined can
+   bypass it (the hashed password ships in this file). It only stops
+   casual access. For real protection you need a backend with proper
+   authentication (e.g. Azure Static Web Apps with corporate auth).
+   ============================================================ */
+
+const AUTH_ENABLED  = true;
+const PASSWORD_HASH = '500854ea2508552c4a70c828c059f9d08d00cd9facc1413e22beee5c4baf85d5';
+const AUTH_VERSION  = '1';
+const REMEMBER_DAYS = 1;
+const STORAGE_KEY   = 'damageMeasurementAuth';
+
+/* SHA-256 using the Web Crypto API. Returns a hex string.
+   This API is available in all modern browsers without libraries. */
+async function sha256(text) {
+  const buffer = new TextEncoder().encode(text);
+  const hashBuf = await crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(hashBuf))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function isAlreadyAuthenticated() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    /* Three things must match:
+       - version (lets us invalidate everyone at once)
+       - hash (in case the password has changed)
+       - timestamp not too old */
+    if (data.version !== AUTH_VERSION) return false;
+    if (data.hash !== PASSWORD_HASH) return false;
+    const ageDays = (Date.now() - data.timestamp) / (1000 * 60 * 60 * 24);
+    if (ageDays > REMEMBER_DAYS) return false;
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function rememberAuth() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    version: AUTH_VERSION,
+    hash: PASSWORD_HASH,
+    timestamp: Date.now()
+  }));
+}
+
+function unlockApp() {
+  document.getElementById('login').hidden = true;
+  document.getElementById('app').hidden = false;
+  /* Initialize the main app only AFTER passing auth, so all the
+     code below doesn't run for unauthenticated users. */
+  initApp();
+}
+
+async function tryLogin() {
+  const input = document.getElementById('login-input').value;
+  const errorEl = document.getElementById('login-error');
+  errorEl.textContent = '';
+
+  if (!input) {
+    errorEl.textContent = 'Please enter the password';
+    return;
+  }
+
+  const hash = await sha256(input);
+  if (hash === PASSWORD_HASH) {
+    rememberAuth();
+    unlockApp();
+  } else {
+    errorEl.textContent = 'Incorrect password';
+    document.getElementById('login-input').value = '';
+  }
+}
+
+/* Bootstrap: if auth is disabled, unlock immediately. If already
+   authenticated, skip login. Otherwise wait for password. */
+(function bootstrap() {
+  if (!AUTH_ENABLED) {
+    unlockApp();
+    return;
+  }
+  if (isAlreadyAuthenticated()) {
+    unlockApp();
+    return;
+  }
+  document.getElementById('login-button').addEventListener('click', tryLogin);
+  document.getElementById('login-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') tryLogin();
+  });
+  /* Focus the input automatically on desktop. On mobile we don't
+     auto-focus because it would pop the keyboard before the user
+     even sees the page. */
+  if (!('ontouchstart' in window)) {
+    document.getElementById('login-input').focus();
+  }
+})();
+
+
+/* ============================================================
+   MAIN APP
+   ============================================================
+   Everything below runs only after successful authentication.
+   Wrapped in a function called by unlockApp().
+   ============================================================ */
+function initApp() {
+
 /* ============================================================
    STATE
    ============================================================ */
@@ -447,11 +645,6 @@ const state = {
   pendingB: null,
   dimCounter: 0,
   renamingId: null,
-
-  /* When true, the calibration modal is being used to EDIT
-     an existing reference (not to set it for the first time).
-     This changes the behavior on confirm: don't go to
-     measure-idle, just close and stay in measure-idle. */
   editingReference: false
 };
 
@@ -529,7 +722,7 @@ function loadPhotoFromFile(file) {
       state.dimCounter = 0;
       resetZoom();
       setPhase('calib-1');
-      showOnboardModal();
+      modalOnboard.classList.add('show');
     };
     img.src = e.target.result;
   };
@@ -569,7 +762,7 @@ function clampOffset() {
 
 
 /* ============================================================
-   COORDINATE HELPERS
+   COORDINATES
    ============================================================ */
 function getCanvasCoord(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
@@ -590,9 +783,41 @@ function getImagePoint(clientX, clientY) {
 /* ============================================================
    DRAWING
    ============================================================ */
-function baseCrossSize() { return Math.max(20, canvas.width * 0.012); }
-function baseStroke()    { return Math.max(5,  canvas.width * 0.003); }
-function baseFontSize()  { return Math.max(28, canvas.width * 0.022); }
+/* ============================================================
+   SCREEN-CONSISTENT SIZING
+   ============================================================
+   The cross/stroke/font sizes are defined in SCREEN pixels and
+   then translated to IMAGE pixels using the current display
+   ratio. This makes them look the same physical size on both
+   mobile (~400px wide canvas on screen) and desktop (~1200px
+   wide). Without this, a percentage-of-image size would look
+   2-3× bigger on desktop than on mobile.
+
+   When exporting, we want LARGER marks (proportional to the
+   image, not the screen) so the saved JPEG is readable when
+   viewed at full size. The exportMode flag handles that.
+   ============================================================ */
+let exportMode = false;
+
+function imagePerScreenPx() {
+  /* How many image pixels fit in one screen pixel of canvas */
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width) return 1;
+  return canvas.width / rect.width;
+}
+
+function baseCrossSize() {
+  if (exportMode) return Math.max(20, canvas.width * 0.012);
+  return 14 * imagePerScreenPx();   // 14 screen px
+}
+function baseStroke() {
+  if (exportMode) return Math.max(5, canvas.width * 0.003);
+  return 3 * imagePerScreenPx();    // 3 screen px
+}
+function baseFontSize() {
+  if (exportMode) return Math.max(28, canvas.width * 0.022);
+  return 18 * imagePerScreenPx();   // 18 screen px
+}
 
 function redraw() {
   if (!state.photo) return;
@@ -672,7 +897,7 @@ function drawLabel(a, b, text, color, fontSize, k) {
 
 
 /* ============================================================
-   TOUCH/MOUSE INPUT
+   TOUCH AND MOUSE
    ============================================================ */
 const TAP_THRESHOLD_PX = 10;
 const TAP_MAX_MS = 500;
@@ -774,30 +999,14 @@ function onWheel(evt) {
    TAP HANDLER
    ============================================================ */
 function handleTap(imgPoint) {
-  if (state.phase === 'calib-1') {
-    state.calibPoints[0] = imgPoint; setPhase('calib-1-set');
-  }
-  else if (state.phase === 'calib-1-set') {
-    state.calibPoints[0] = imgPoint; redraw();
-  }
-  else if (state.phase === 'calib-2') {
-    state.calibPoints[1] = imgPoint; setPhase('calib-2-set');
-  }
-  else if (state.phase === 'calib-2-set') {
-    state.calibPoints[1] = imgPoint; redraw();
-  }
-  else if (state.phase === 'measure-1-empty') {
-    state.pendingA = imgPoint; setPhase('measure-1');
-  }
-  else if (state.phase === 'measure-1') {
-    state.pendingA = imgPoint; redraw();
-  }
-  else if (state.phase === 'measure-2-empty') {
-    state.pendingB = imgPoint; setPhase('measure-2');
-  }
-  else if (state.phase === 'measure-2') {
-    state.pendingB = imgPoint; redraw();
-  }
+  if (state.phase === 'calib-1') { state.calibPoints[0] = imgPoint; setPhase('calib-1-set'); }
+  else if (state.phase === 'calib-1-set') { state.calibPoints[0] = imgPoint; redraw(); }
+  else if (state.phase === 'calib-2') { state.calibPoints[1] = imgPoint; setPhase('calib-2-set'); }
+  else if (state.phase === 'calib-2-set') { state.calibPoints[1] = imgPoint; redraw(); }
+  else if (state.phase === 'measure-1-empty') { state.pendingA = imgPoint; setPhase('measure-1'); }
+  else if (state.phase === 'measure-1') { state.pendingA = imgPoint; redraw(); }
+  else if (state.phase === 'measure-2-empty') { state.pendingB = imgPoint; setPhase('measure-2'); }
+  else if (state.phase === 'measure-2') { state.pendingB = imgPoint; redraw(); }
 }
 
 
@@ -812,7 +1021,6 @@ fabExitClean.addEventListener('click', () => document.body.classList.remove('cle
 /* ============================================================
    ONBOARDING
    ============================================================ */
-function showOnboardModal() { modalOnboard.classList.add('show'); }
 document.getElementById('onboard-ok').addEventListener('click', () => {
   modalOnboard.classList.remove('show');
 });
@@ -823,18 +1031,12 @@ document.getElementById('scale-set-ok').addEventListener('click', () => {
 
 /* ============================================================
    CALIBRATION
-   ============================================================
-   Two scenarios use this modal:
-   1. First time setting the scale (after picking ref points)
-   2. Editing the reference value while keeping the same points
-   The "editingReference" flag distinguishes them.
    ============================================================ */
 function openCalibModal(forEditing = false) {
   state.editingReference = forEditing;
   document.getElementById('calib-modal-title').textContent =
     forEditing ? 'Edit reference value' : 'Reference distance';
 
-  /* If editing, prefill with current value */
   if (forEditing && state.mmPerPixel) {
     const [a, b] = state.calibPoints;
     const pixels = Math.hypot(b.x - a.x, b.y - a.y);
@@ -854,11 +1056,6 @@ function confirmCalibration() {
   const pixels = Math.hypot(b.x - a.x, b.y - a.y);
   const newMmPerPixel = mm / pixels;
 
-  /* If we are EDITING, the dimensions stored in mm need to be
-     recalculated. Their pixel distance hasn't changed, only the
-     conversion factor. So we recompute mm = pixels * newScale.
-     We saved them with their pixel positions (a, b), so this is
-     a direct recalculation. */
   if (state.editingReference && state.dimensions.length > 0) {
     state.dimensions.forEach(d => {
       const px = Math.hypot(d.b.x - d.a.x, d.b.y - d.a.y);
@@ -871,11 +1068,9 @@ function confirmCalibration() {
   modalCalib.classList.remove('show');
 
   if (state.editingReference) {
-    /* Stay where we were, just refresh the canvas */
     state.editingReference = false;
     setPhase('measure-idle');
   } else {
-    /* First time: show the "scale set" celebration modal */
     setPhase('measure-idle');
     document.getElementById('scale-set-text').textContent =
       `Scale: ${state.mmPerPixel.toFixed(3)} mm/pixel.`;
@@ -885,41 +1080,28 @@ function confirmCalibration() {
 
 
 /* ============================================================
-   EDIT REFERENCE FLOW
-   ============================================================
-   The scale badge (bottom-left) is now a button. Tapping it
-   opens the "Edit reference" choice modal with two options:
-   - Edit just the value (mm)
-   - Re-pick the two reference points
+   EDIT REFERENCE
    ============================================================ */
 badge.addEventListener('click', () => {
   if (state.mmPerPixel) modalEditRef.classList.add('show');
 });
-
 document.getElementById('edit-ref-value').addEventListener('click', () => {
   modalEditRef.classList.remove('show');
   openCalibModal(true);
 });
-
 document.getElementById('edit-ref-points').addEventListener('click', () => {
   modalEditRef.classList.remove('show');
-  /* Wipe reference points but keep dimensions and photo.
-     Dimensions will be recalculated when calibration completes. */
   state.calibPoints = [];
   state.editingReference = true;
-  /* Save the OLD mmPerPixel? No: we recalculate from scratch
-     because the points themselves are being re-picked, which
-     means we know the new pixels and we'll ask for the new mm. */
   setPhase('calib-1');
 });
-
 document.getElementById('edit-ref-cancel').addEventListener('click', () => {
   modalEditRef.classList.remove('show');
 });
 
 
 /* ============================================================
-   "START NEW" FLOW
+   START NEW
    ============================================================ */
 btnNewProject.addEventListener('click', () => {
   modalNewProject.classList.add('show');
@@ -929,7 +1111,6 @@ document.getElementById('new-cancel').addEventListener('click', () => {
 });
 document.getElementById('new-confirm').addEventListener('click', () => {
   modalNewProject.classList.remove('show');
-  /* Full reset */
   state.photo = null;
   state.calibPoints = [];
   state.dimensions = [];
@@ -1015,7 +1196,12 @@ panelBackdrop.addEventListener('click', closePanel);
    ============================================================ */
 function exportImage(callback) {
   const savedScale = state.scale, savedOffX = state.offsetX, savedOffY = state.offsetY;
+  /* Switch to "image-proportional" sizing while exporting, so the
+     saved JPEG has nicely visible marks regardless of resolution.
+     Then we switch back to screen-proportional for interactive use. */
+  exportMode = true;
   resetZoom(); redraw(); callback();
+  exportMode = false;
   state.scale = savedScale; state.offsetX = savedOffX; state.offsetY = savedOffY;
   updateFabFit(); redraw();
 }
@@ -1109,16 +1295,12 @@ function updateButtons() {
     btnSave.style.display = 'block';
     btnShare.style.display = 'block';
   }
-  else if (state.phase === 'measure-1-empty') {
-    btnCancelMeas.style.display = 'block';
-  }
+  else if (state.phase === 'measure-1-empty') { btnCancelMeas.style.display = 'block'; }
   else if (state.phase === 'measure-1') {
     btnConfirmPoint.style.display = 'block';
     btnCancelMeas.style.display = 'block';
   }
-  else if (state.phase === 'measure-2-empty') {
-    btnCancelMeas.style.display = 'block';
-  }
+  else if (state.phase === 'measure-2-empty') { btnCancelMeas.style.display = 'block'; }
   else if (state.phase === 'measure-2') {
     btnConfirmMeas.style.display = 'block';
     btnCancelMeas.style.display = 'block';
@@ -1223,15 +1405,21 @@ mmInput.addEventListener('keydown', (e) => {
 
 
 /* ============================================================
-   LIST BUTTON
+   LIST BUTTON + STARTUP
    ============================================================ */
 btnList.addEventListener('click', openPanel);
 
+/* On window resize (e.g. desktop user resizes the browser, or
+   mobile user rotates), the canvas's screen size changes but its
+   internal resolution doesn't. We redraw so cross sizes recalculate
+   for the new screen-to-image ratio. */
+window.addEventListener('resize', () => {
+  if (state.photo) redraw();
+});
 
-/* ============================================================
-   STARTUP
-   ============================================================ */
 setPhase('init');
+
+} /* end of initApp() */
 </script>
 </body>
 </html>
