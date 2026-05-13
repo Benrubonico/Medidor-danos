@@ -652,6 +652,24 @@ const ARUCO_MARKER_SIZES_MM = {
 
 
 /* ============================================================
+   SAFE ZONE
+   ============================================================
+   Visual guide drawn on top of the photo to encourage centering
+   the ArUco marker and the damaged area within the central, low-
+   distortion region of the camera lens. Purely passive — does not
+   block any action.
+
+   SAFE_ZONE_RATIO: fraction of the canvas width/height covered by
+   the safe zone. 0.70 means a rectangle 70% wide and 70% tall,
+   centered. Lower values are stricter (less distortion, less
+   framing freedom). Raising above 0.85 makes the guide nearly
+   useless.
+   ============================================================ */
+
+const SAFE_ZONE_RATIO = 0.70;
+
+
+/* ============================================================
    AUTH / LOGIN
    ============================================================
    HOW TO CONFIGURE:
@@ -1002,6 +1020,24 @@ function redraw() {
   const crossSize = baseCrossSize() * k;
   const stroke    = baseStroke() * k;
   const fontSize  = baseFontSize() * k;
+
+  /* Safe zone guide: a centred dashed rectangle that nudges the
+     user to keep the subject inside the low-distortion central
+     region of the photo. Skipped in exports (it is a capture
+     guide, not documentation) and in clean mode (which hides
+     every overlay). Drawn before user marks so those sit on top. */
+  if (!exportMode && !document.body.classList.contains('clean')) {
+    const w = canvas.width  * SAFE_ZONE_RATIO;
+    const h = canvas.height * SAFE_ZONE_RATIO;
+    const x = (canvas.width  - w) / 2;
+    const y = (canvas.height - h) / 2;
+    ctx.save();
+    ctx.strokeStyle = '#00bcd4';
+    ctx.lineWidth = stroke;
+    ctx.setLineDash([10 * imagePerScreenPx() * k, 8 * imagePerScreenPx() * k]);
+    ctx.strokeRect(x, y, w, h);
+    ctx.restore();
+  }
 
   state.calibPoints.forEach(p => drawCross(p.x, p.y, '#ffeb3b', crossSize, stroke));
   if (state.calibPoints.length === 2) {
