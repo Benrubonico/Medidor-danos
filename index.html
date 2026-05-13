@@ -385,6 +385,40 @@
       opacity: 0.4;
       cursor: not-allowed;
     }
+
+    /* ============================================================
+       AUTO-CALIBRATION BANNER
+       ============================================================
+       Green banner shown briefly when ArUco detection succeeds.
+       Sits above the regular #hint, auto-hides after a few seconds,
+       and disappears on first interaction. Tap to dismiss.
+       ============================================================ */
+    #auto-cal-banner {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      padding: 12px 16px;
+      background: rgba(39, 174, 96, 0.92);
+      color: #fff;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      text-align: center;
+      z-index: 7;
+      cursor: pointer;
+      display: none;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    #auto-cal-banner.show { display: block; }
+    #auto-cal-banner .warn {
+      display: block;
+      margin-top: 6px;
+      font-weight: 500;
+      font-size: 13px;
+      color: #fff8c4;
+    }
+    body.clean #auto-cal-banner { display: none !important; }
   </style>
 </head>
 <body>
@@ -431,6 +465,7 @@
     </div>
     <canvas id="canvas" style="display:none"></canvas>
     <div id="hint" style="display:none"></div>
+    <div id="auto-cal-banner"></div>
     <button id="scale-badge"></button>
     <button id="fab-fit" title="Fit to screen">1:1</button>
   </div>
@@ -957,6 +992,7 @@ function tryAutoCalibration() {
                 `${m.sizeMm} mm, scale = ${m.mmPerPixel.toFixed(4)} mm/px, ` +
                 `side variance = ${m.sideVariance.toFixed(3)}`);
     setPhase('measure-idle');
+    showAutoCalBanner(m);
     return;
   }
 
@@ -966,6 +1002,48 @@ function tryAutoCalibration() {
   setPhase('calib-1');
   modalOnboard.classList.add('show');
 }
+
+
+/* ============================================================
+   AUTO-CALIBRATION BANNER
+   ============================================================
+   Shows a green confirmation banner with the detected marker's
+   ID and the resulting scale. Adds a perspective-distortion
+   warning when the marker's side lengths are noticeably uneven
+   (a sign the photo was taken at an angle).
+
+   The banner auto-hides after a few seconds and also hides on
+   first interaction with the canvas, so it never gets in the
+   way of measurement.
+   ============================================================ */
+
+const AUTO_CAL_BANNER_TIMEOUT_MS = 5000;   // 5 seconds
+const PERSPECTIVE_WARN_THRESHOLD = 1.15;   // sideVariance > this → warn
+
+let autoCalBannerTimer = null;
+const autoCalBanner = document.getElementById('auto-cal-banner');
+
+function showAutoCalBanner(marker) {
+  let html = `✓ Marker ID ${marker.id} detected — ` +
+             `scale: ${marker.mmPerPixel.toFixed(3)} mm/px`;
+  if (marker.sideVariance > PERSPECTIVE_WARN_THRESHOLD) {
+    html += `<span class="warn">⚠ Photo looks tilted — scale is approximate. ` +
+            `Consider retaking the photo more square-on.</span>`;
+  }
+  autoCalBanner.innerHTML = html;
+  autoCalBanner.classList.add('show');
+
+  clearTimeout(autoCalBannerTimer);
+  autoCalBannerTimer = setTimeout(hideAutoCalBanner, AUTO_CAL_BANNER_TIMEOUT_MS);
+}
+
+function hideAutoCalBanner() {
+  autoCalBanner.classList.remove('show');
+  clearTimeout(autoCalBannerTimer);
+  autoCalBannerTimer = null;
+}
+
+autoCalBanner.addEventListener('click', hideAutoCalBanner);
 
 
 /* ============================================================
@@ -1258,6 +1336,7 @@ function onWheel(evt) {
    TAP HANDLER
    ============================================================ */
 function handleTap(imgPoint) {
+  hideAutoCalBanner();
   if (state.phase === 'calib-1') { state.calibPoints[0] = imgPoint; setPhase('calib-1-set'); }
   else if (state.phase === 'calib-1-set') { state.calibPoints[0] = imgPoint; redraw(); }
   else if (state.phase === 'calib-2') { state.calibPoints[1] = imgPoint; setPhase('calib-2-set'); }
