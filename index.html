@@ -909,12 +909,62 @@ function loadPhotoFromFile(file) {
       state.pendingB = null;
       state.dimCounter = 0;
       resetZoom();
-      setPhase('calib-1');
-      modalOnboard.classList.add('show');
+      /* Try automatic calibration first. If a known ArUco marker
+         is found, the scale is set automatically and we skip the
+         manual two-point flow. If not, we fall back to the manual
+         flow (identical to what the app did before this change). */
+      tryAutoCalibration();
     };
     img.src = e.target.result;
   };
   reader.readAsDataURL(file);
+}
+
+
+/* ============================================================
+   AUTOMATIC CALIBRATION (via ArUco marker)
+   ============================================================
+   Called after a photo has been loaded into state.photo. Runs
+   ArUco detection and, on success, jumps straight to the
+   measurement phase with a fully configured scale. On failure,
+   falls through to the manual two-point flow that was the only
+   option before this change.
+
+   Why we populate state.calibPoints on success:
+   The rest of the app (badge text, "edit reference" flow,
+   recalculation when the user edits mm value) reads from
+   calibPoints to know "where is the reference in the image".
+   Filling it with two opposite corners of the marker keeps
+   those features working coherently without rewriting them.
+   ============================================================ */
+function tryAutoCalibration() {
+  const result = detectArucoMarker(state.photo);
+
+  if (result.errorMessage) {
+    console.warn('Auto calibration error:', result.errorMessage);
+  }
+
+  if (result.best) {
+    const m = result.best;
+    /* Two opposite corners of the marker as the "reference
+       segment". The diagonal length in px does NOT match the
+       side length, so we cannot reuse mm/pixel from the segment;
+       instead we just store the segment for UI display and set
+       mmPerPixel directly from the marker's own scale. */
+    state.calibPoints = [m.corners[0], m.corners[2]];
+    state.mmPerPixel  = m.mmPerPixel;
+    console.log(`Auto calibration OK: marker ID ${m.id}, ` +
+                `${m.sizeMm} mm, scale = ${m.mmPerPixel.toFixed(4)} mm/px, ` +
+                `side variance = ${m.sideVariance.toFixed(3)}`);
+    setPhase('measure-idle');
+    return;
+  }
+
+  /* No known marker detected — fall back to the manual flow,
+     identical to the pre-ArUco behaviour of the app. */
+  console.log('No ArUco marker detected, falling back to manual calibration.');
+  setPhase('calib-1');
+  modalOnboard.classList.add('show');
 }
 
 
