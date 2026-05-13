@@ -406,14 +406,27 @@
   </div>
 </div>
 
+<!-- ============================================================
+     OPENCV LOADING OVERLAY
+     ============================================================
+     Visible by default; hidden by the script once cv.Mat exists.
+     Sits above the welcome screen so the user can't tap the
+     photo-pick buttons before the engine is ready.
+     ============================================================ -->
+<div id="opencv-loading">
+  <div class="spinner"></div>
+  <div class="label">Loading measurement engine…</div>
+  <div class="sublabel">First load takes a few seconds. After that it's instant.</div>
+</div>
+
 <div id="app" hidden>
   <div id="stage">
     <div id="welcome">
       <h1>Damage Measurement Tool</h1>
       <p>Take a new photo or pick one from the gallery</p>
       <div class="actions">
-        <button id="btn-pick-camera">📷 Take photo</button>
-        <button id="btn-pick-gallery" class="secondary">🖼 From gallery</button>
+        <button id="btn-pick-camera" disabled>📷 Take photo</button>
+        <button id="btn-pick-gallery" class="secondary" disabled>🖼 From gallery</button>
       </div>
     </div>
     <canvas id="canvas" style="display:none"></canvas>
