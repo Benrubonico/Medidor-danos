@@ -544,6 +544,62 @@
 </div>
 
 <script>
+
+/* ============================================================
+   OPENCV READINESS
+   ============================================================
+   OpenCV.js loads asynchronously (see <script async> in <head>).
+   The library exposes a global `cv` object, but it is not usable
+   until its WebAssembly runtime has finished initialising. The
+   standard signal for that is the existence of cv.Mat.
+
+   While we wait we keep the loading overlay visible and the
+   photo-pick buttons disabled. The moment cv is ready we:
+     - hide the overlay
+     - enable the buttons
+     - log to console whether ArUco detection is available
+
+   The ArUco check is the verification we need before phase 2:
+   if it logs `false`, this opencv.js build does not include the
+   detector and we cannot proceed with automatic calibration.
+   ============================================================ */
+(function waitForOpenCV() {
+  function isReady() {
+    return typeof cv !== 'undefined' && cv && typeof cv.Mat === 'function';
+  }
+
+  function onReady() {
+    document.getElementById('opencv-loading').hidden = true;
+    document.getElementById('btn-pick-camera').disabled = false;
+    document.getElementById('btn-pick-gallery').disabled = false;
+
+    /* ArUco was moved from the contrib repo into the core
+       objdetect module in OpenCV 4.7. A build that includes
+       objdetect exposes cv.ArucoDetector at the top level. */
+    var arucoAvailable = (typeof cv.ArucoDetector === 'function');
+    console.log('OpenCV ready, ArUco available:', arucoAvailable);
+  }
+
+  if (isReady()) { onReady(); return; }
+
+  /* The "official" signal: OpenCV calls this when its WASM
+     runtime is fully initialised. We register it first, in case
+     it hasn't fired yet. */
+  if (typeof cv !== 'undefined' && cv) {
+    cv.onRuntimeInitialized = onReady;
+  }
+
+  /* Fallback poll for the edge cases where onRuntimeInitialized
+     does not fire (e.g. cv was assigned but already initialised,
+     or assigned after our handler). Cheap and self-terminating. */
+  var pollId = setInterval(function () {
+    if (isReady()) {
+      clearInterval(pollId);
+      onReady();
+    }
+  }, 100);
+})();
+
 /* ============================================================
    AUTH / LOGIN
    ============================================================
