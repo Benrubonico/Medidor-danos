@@ -1021,12 +1021,15 @@ function redraw() {
   const stroke    = baseStroke() * k;
   const fontSize  = baseFontSize() * k;
 
-  /* Safe zone guide: a centred dashed rectangle that nudges the
-     user to keep the subject inside the low-distortion central
-     region of the photo. Skipped in exports (it is a capture
-     guide, not documentation) and in clean mode (which hides
-     every overlay). Drawn before user marks so those sit on top. */
-  if (!exportMode && !document.body.classList.contains('clean')) {
+  /* Safe zone guide: a centred dashed rectangle drawn only during
+     the manual calibration phases, when the user is still deciding
+     whether the photo's framing is good enough. Once the scale is
+     set and we move into measurement, the guide disappears so it
+     doesn't clutter the workspace. Skipped in exports and in clean
+     mode. Drawn before user marks so those sit on top. */
+  const inCalibPhase = state.phase === 'calib-1' || state.phase === 'calib-1-set'
+                    || state.phase === 'calib-2' || state.phase === 'calib-2-set';
+  if (inCalibPhase && !exportMode && !document.body.classList.contains('clean')) {
     const w = canvas.width  * SAFE_ZONE_RATIO;
     const h = canvas.height * SAFE_ZONE_RATIO;
     const x = (canvas.width  - w) / 2;
