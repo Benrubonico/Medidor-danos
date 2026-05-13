@@ -573,13 +573,12 @@
     document.getElementById('btn-pick-camera').disabled = false;
     document.getElementById('btn-pick-gallery').disabled = false;
 
-    /* ArUco was moved from the contrib repo into the core
-       objdetect module in OpenCV 4.7. A build that includes
-       objdetect exposes cv.ArucoDetector at the top level. */
-    var arucoAvailable = (typeof cv.ArucoDetector === 'function');
+    /* This build exposes ArUco under the namespaced name
+       cv.aruco_ArucoDetector (rather than the bare cv.ArucoDetector
+       that some other builds use). Either way, the constructor
+       must exist as a function for detection to be usable. */
+    var arucoAvailable = (typeof cv.aruco_ArucoDetector === 'function');
     console.log('OpenCV ready, ArUco available:', arucoAvailable);
-    var arucoKeys = Object.keys(cv).filter(function (k) { return /aruco|detect|dict/i.test(k); }).sort();
-    console.log('Aruco/detect-related keys in cv:', arucoKeys);
   }
 
   if (isReady()) { onReady(); return; }
