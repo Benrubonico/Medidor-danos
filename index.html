@@ -578,6 +578,8 @@
        objdetect exposes cv.ArucoDetector at the top level. */
     var arucoAvailable = (typeof cv.ArucoDetector === 'function');
     console.log('OpenCV ready, ArUco available:', arucoAvailable);
+    var arucoKeys = Object.keys(cv).filter(function (k) { return /aruco|detect|dict/i.test(k); }).sort();
+    console.log('Aruco/detect-related keys in cv:', arucoKeys);
   }
 
   if (isReady()) { onReady(); return; }
