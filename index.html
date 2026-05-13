@@ -601,6 +601,56 @@
   }, 100);
 })();
 
+
+/* ============================================================
+   ARUCO MARKERS CONFIGURATION
+   ============================================================
+   Real-world size of each printed marker, in millimetres.
+   The ID of the marker tells the app its physical size, so
+   detection is fully automatic — the user does not pick a
+   marker size anywhere in the UI.
+
+   HOW TO ADD A NEW MARKER:
+
+   1. Print a new ArUco marker (DICT_4X4_50 dictionary). You
+      can generate one at https://chev.me/arucogen/ — pick
+      "4x4 (50, 100, 250, 1000)" and any ID not already in
+      use below. Print it large enough that the black border
+      is at least a few millimetres thick.
+
+   2. Measure the printed side length precisely with a ruler.
+      It is normally NOT exactly the size you asked the printer
+      for; measure the actual print.
+
+   3. Add a new line to ARUCO_MARKER_SIZES_MM below in the form
+      `ID: size_in_mm,` — for example, a marker with ID 5 that
+      measures 75 mm per side becomes:  5: 75,
+
+   4. Save and reload the app. No other changes needed.
+
+   HOW TO CHANGE THE DICTIONARY:
+
+   Change ARUCO_DICTIONARY below to one of the DICT_* constants
+   listed in OpenCV docs. Then re-print all your markers using
+   the new dictionary. Keep the table in sync.
+
+   WHY DICT_4X4_50:
+   The 4x4 grid is the simplest pattern (easiest to detect at
+   distance and under poor lighting). The "50" means we have
+   50 distinct IDs available, which is far more than the three
+   markers we use, but the trade-off cost is zero — smaller
+   dictionaries are not meaningfully faster.
+   ============================================================ */
+
+const ARUCO_DICTIONARY = 'DICT_4X4_50';
+
+const ARUCO_MARKER_SIZES_MM = {
+  0:  20,   // small damage  (< 50 mm)
+  1:  50,   // medium damage (50–200 mm)
+  2: 100,   // large damage  (> 200 mm)
+};
+
+
 /* ============================================================
    AUTH / LOGIN
    ============================================================
@@ -1536,6 +1586,157 @@ btnList.addEventListener('click', openPanel);
 window.addEventListener('resize', () => {
   if (state.photo) redraw();
 });
+
+
+/* ============================================================
+   ARUCO MARKER DETECTION
+   ============================================================
+   detectArucoMarker(img) runs ArUco detection on a loaded
+   HTMLImageElement and returns information about every known
+   marker it found, plus a `best` shortcut pointing to the
+   largest one (most pixels per side = most precise scale).
+
+   Memory management:
+   OpenCV.js runs in WebAssembly, which has its own heap that
+   the browser does not garbage-collect. Every cv.Mat we create
+   must be `.delete()`-ed. The try/finally block guarantees
+   that even if detection throws, we still release the memory.
+
+   Return value structure:
+   {
+     markers: [ { id, sizeMm, corners, sideLengthsPx,
+                  avgSidePx, mmPerPixel, sideVariance } ... ],
+     best:   <one of the items in markers, or null>,
+     errorMessage: <string explaining failure, or null>
+   }
+
+   `corners` is an array of 4 {x, y} points in image coordinates,
+   in the order the OpenCV detector returned them (top-left,
+   top-right, bottom-right, bottom-left when the marker is
+   roughly aligned with the image).
+
+   `sideVariance` is the relative spread of the four side
+   lengths: max(side) / min(side). A perfectly flat, head-on
+   marker gives ~1.00. Values > 1.15 suggest noticeable
+   perspective distortion and the scale will be only approximate.
+   ============================================================ */
+function detectArucoMarker(img) {
+  /* Pull the picked dictionary name from config and translate
+     it into the numeric constant OpenCV expects. */
+  const dictConstant = cv[ARUCO_DICTIONARY];
+  if (typeof dictConstant === 'undefined') {
+    return { markers: [], best: null,
+      errorMessage: `Unknown dictionary: ${ARUCO_DICTIONARY}` };
+  }
+
+  /* Allocate all OpenCV resources up front, so the finally
+     block has a single, predictable list to clean up. */
+  const src           = cv.imread(img);
+  const gray          = new cv.Mat();
+  const markerIds     = new cv.Mat();
+  const markerCorners = new cv.MatVector();
+  const rejected      = new cv.MatVector();
+  const dictionary    = cv.getPredefinedDictionary(dictConstant);
+  const params        = new cv.aruco_DetectorParameters();
+  const detector      = new cv.aruco_ArucoDetector(dictionary, params);
+
+  try {
+    /* ArUco detection runs on a single-channel grayscale image.
+       Converting explicitly is faster and more predictable than
+       letting the detector do it internally. */
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+
+    detector.detectMarkers(gray, markerCorners, markerIds, rejected);
+
+    const found = [];
+    const count = markerIds.rows;
+
+    for (let i = 0; i < count; i++) {
+      const id = markerIds.data32S[i];
+
+      /* Only report markers whose physical size we know.
+         An unknown ID is not an error — the user might have
+         other markers in the scene from another project. */
+      if (!(id in ARUCO_MARKER_SIZES_MM)) continue;
+
+      /* markerCorners.get(i) returns a 1x4 Mat of CV_32FC2:
+         four points, each with two float32 coordinates. */
+      const cornersMat = markerCorners.get(i);
+      const d = cornersMat.data32F;
+      const corners = [
+        { x: d[0], y: d[1] },
+        { x: d[2], y: d[3] },
+        { x: d[4], y: d[5] },
+        { x: d[6], y: d[7] }
+      ];
+      cornersMat.delete();
+
+      const sideLengthsPx = [
+        Math.hypot(corners[1].x - corners[0].x, corners[1].y - corners[0].y),
+        Math.hypot(corners[2].x - corners[1].x, corners[2].y - corners[1].y),
+        Math.hypot(corners[3].x - corners[2].x, corners[3].y - corners[2].y),
+        Math.hypot(corners[0].x - corners[3].x, corners[0].y - corners[3].y)
+      ];
+      const avgSidePx    = sideLengthsPx.reduce((a, b) => a + b, 0) / 4;
+      const sizeMm       = ARUCO_MARKER_SIZES_MM[id];
+      const mmPerPixel   = sizeMm / avgSidePx;
+      const sideVariance = Math.max(...sideLengthsPx) / Math.min(...sideLengthsPx);
+
+      found.push({ id, sizeMm, corners, sideLengthsPx,
+                   avgSidePx, mmPerPixel, sideVariance });
+    }
+
+    /* Pick the marker with the most pixels per side as `best`:
+       larger marker in the image → more precise scale. */
+    let best = null;
+    for (const m of found) {
+      if (!best || m.avgSidePx > best.avgSidePx) best = m;
+    }
+
+    return { markers: found, best, errorMessage: null };
+  } catch (err) {
+    return { markers: [], best: null,
+      errorMessage: `Detection failed: ${err.message || err}` };
+  } finally {
+    src.delete();
+    gray.delete();
+    markerIds.delete();
+    markerCorners.delete();
+    rejected.delete();
+    dictionary.delete();
+    params.delete();
+    detector.delete();
+  }
+}
+
+/* ============================================================
+   TEST HELPER — call from browser console
+   ============================================================
+   While we are still in the testing phase (the detection is
+   not yet wired into the photo-load flow), this helper lets
+   you verify the detector works on the currently-loaded photo.
+
+   Usage: load a photo as you normally would, then in the
+   console type:    testDetection()
+
+   It logs the full result to the console and, if a marker was
+   found, the implied scale in mm/pixel.
+   ============================================================ */
+window.testDetection = function () {
+  if (!state.photo) {
+    console.log('No photo loaded. Pick a photo first.');
+    return;
+  }
+  const result = detectArucoMarker(state.photo);
+  console.log('Detection result:', result);
+  if (result.best) {
+    console.log(`Best marker: ID ${result.best.id}, ` +
+                `${result.best.sizeMm} mm, ` +
+                `scale = ${result.best.mmPerPixel.toFixed(4)} mm/px, ` +
+                `side variance = ${result.best.sideVariance.toFixed(3)}`);
+  }
+};
+
 
 setPhase('init');
 
