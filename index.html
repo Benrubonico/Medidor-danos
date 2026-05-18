@@ -738,7 +738,7 @@
 const ARUCO_DICTIONARY = 'DICT_4X4_50';
 
 const ARUCO_MARKER_SIZES_MM = {
-  0:  15,   // small damage  (< 40 mm)  ← actualizado de 20 a 15
+  0:  20,   // small damage  (< 50 mm)
   1:  50,   // medium damage (50–200 mm)
   2: 100,   // large damage  (> 200 mm)
 };
@@ -924,6 +924,8 @@ const state = {
   mmPerPixel: null,
   calibTilted: false,    // true if user accepted a tilted-marker calibration
   calibMarkerId: null,   // ID of the auto-detected marker, null if manual
+  calibMarkerCorners: null, // 4 corners of the detected marker in image
+                            // coords (auto calib only); null when manual
   dimensions: [],
   pendingA: null,
   pendingB: null,
@@ -1057,6 +1059,7 @@ function loadPhotoFromBlob(blob) {
       state.mmPerPixel = null;
       state.calibTilted = false;
       state.calibMarkerId = null;
+      state.calibMarkerCorners = null;
       state.pendingA = null;
       state.pendingB = null;
       state.dimCounter = 0;
@@ -1130,15 +1133,21 @@ function tryAutoCalibration() {
    photo modal when the user explicitly chooses to continue. The
    `tilted` flag controls whether the badge shows a warning. */
 function applyAutoCalibration(marker, tilted) {
-  /* Two opposite corners of the marker as the "reference segment".
-     The diagonal length in px does NOT match the side length, so
-     we cannot reuse mm/pixel from the segment; instead we store the
-     segment for UI display and set mmPerPixel directly from the
-     marker's own scale. */
-  state.calibPoints   = [marker.corners[0], marker.corners[2]];
-  state.mmPerPixel    = marker.mmPerPixel;
-  state.calibMarkerId = marker.id;
-  state.calibTilted   = tilted;
+  /* For auto calibration we store TWO things in state:
+       - calibPoints (two opposite corners): kept for backward
+         compatibility with code paths that read the "reference
+         segment" (badge text, future tools).
+       - calibMarkerCorners (all four corners): used by redraw()
+         to draw the marker as a closed quadrilateral instead of
+         a single diagonal line.
+     mmPerPixel comes directly from the marker's own scale, not
+     from any of these segments, because the diagonal length in
+     px does NOT match the real side length. */
+  state.calibPoints        = [marker.corners[0], marker.corners[2]];
+  state.calibMarkerCorners = marker.corners;
+  state.mmPerPixel         = marker.mmPerPixel;
+  state.calibMarkerId      = marker.id;
+  state.calibTilted        = tilted;
   setPhase('measure-idle');
 }
 
@@ -1260,13 +1269,42 @@ function redraw() {
   const stroke    = baseStroke() * k;
   const fontSize  = baseFontSize() * k;
 
+  /* CALIBRATION OVERLAY (Edición H)
+     ----------------------------------------------------------
+     Two visual styles depending on how the scale was set:
+
+       - Auto (ArUco marker detected): draw the full quadrilateral
+         of the marker plus a single label at its centre. Shows
+         the user which marker was detected AND makes any perspec-
+         tive distortion visible (a square seen square vs. a
+         trapezoid).
+       - Manual (user picked two reference points): two yellow
+         crosses joined by a diagonal line, as before. Unchanged.
+     ---------------------------------------------------------- */
+  if (state.calibMarkerCorners) {
+    /* Auto-detected marker: closed quadrilateral, no corner
+       crosses (the rectangle is enough). Tilted calibrations use
+       the same yellow line, since the badge already conveys the
+       warning in red. */
+    drawPolygon(state.calibMarkerCorners, '#ffeb3b', stroke);
+    if (state.mmPerPixel && state.calibMarkerId != null) {
+      const corners = state.calibMarkerCorners;
+      const cx = (corners[0].x + corners[1].x + corners[2].x + corners[3].x) / 4;
+      const cy = (corners[0].y + corners[1].y + corners[2].y + corners[3].y) / 4;
+      const sizeMm = ARUCO_MARKER_SIZES_MM[state.calibMarkerId];
+      const text = `Marker ID ${state.calibMarkerId} — ${sizeMm} mm`;
+      drawLabelAtPoint({ x: cx, y: cy }, text, '#ffeb3b', fontSize, k);
+    }
+  } else {
+    /* Manual calibration: two crosses and a connecting line. */
     state.calibPoints.forEach(p => drawCross(p.x, p.y, '#ffeb3b', crossSize, stroke));
-  if (state.calibPoints.length === 2) {
-    const [a, b] = state.calibPoints;
-    drawLine(a, b, '#ffeb3b', stroke);
-    if (state.mmPerPixel) {
-      const mm = Math.hypot(b.x - a.x, b.y - a.y) * state.mmPerPixel;
-      drawLabel(a, b, `Reference: ${mm.toFixed(1)} mm`, '#ffeb3b', fontSize, k);
+    if (state.calibPoints.length === 2) {
+      const [a, b] = state.calibPoints;
+      drawLine(a, b, '#ffeb3b', stroke);
+      if (state.mmPerPixel) {
+        const mm = Math.hypot(b.x - a.x, b.y - a.y) * state.mmPerPixel;
+        drawLabel(a, b, `Reference: ${mm.toFixed(1)} mm`, '#ffeb3b', fontSize, k);
+      }
     }
   }
 
@@ -1318,6 +1356,47 @@ function drawLabel(a, b, text, color, fontSize, k) {
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'center';
   ctx.fillText(text, midX, midY);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+}
+
+/* Draw a closed polygon by connecting points in order and back
+   to the first. Used to draw the four sides of a detected ArUco
+   marker (Edición H). Caller passes the points already in image
+   coordinates; the current canvas transform handles zoom/pan. */
+function drawPolygon(points, color, width) {
+  if (!points || points.length < 2) return;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(points[i].x, points[i].y);
+  }
+  ctx.closePath();
+  ctx.stroke();
+}
+
+/* Draw a labelled box centred on a single point. Variant of
+   drawLabel used when there is no natural "two endpoints" to
+   centre between — for example, the marker's centroid (Edición H).
+   The styling intentionally matches drawLabel so the visual
+   language stays consistent. */
+function drawLabelAtPoint(point, text, color, fontSize, k) {
+  ctx.font = `bold ${fontSize}px sans-serif`;
+  const metrics = ctx.measureText(text);
+  const padX = 10 * k, padY = 6 * k;
+  const w = metrics.width + padX * 2;
+  const h = fontSize + padY * 2;
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
+  ctx.fillRect(point.x - w / 2, point.y - h / 2, w, h);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2 * k;
+  ctx.strokeRect(point.x - w / 2, point.y - h / 2, w, h);
+  ctx.fillStyle = color;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, point.x, point.y);
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
 }
@@ -1544,6 +1623,7 @@ document.getElementById('new-confirm').addEventListener('click', () => {
   state.mmPerPixel = null;
   state.calibTilted = false;
   state.calibMarkerId = null;
+  state.calibMarkerCorners = null;
   state.pendingA = null;
   state.pendingB = null;
   state.dimCounter = 0;
