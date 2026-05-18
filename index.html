@@ -397,40 +397,7 @@
       cursor: not-allowed;
     }
 
-    /* ============================================================
-       AUTO-CALIBRATION BANNER
-       ============================================================
-       Green banner shown briefly when ArUco detection succeeds.
-       Sits above the regular #hint, auto-hides after a few seconds,
-       and disappears on first interaction. Tap to dismiss.
-       ============================================================ */
-    #auto-cal-banner {
-      position: absolute;
-      top: 12px;
-      left: 12px;
-      right: 12px;
-      padding: 12px 16px;
-      background: rgba(39, 174, 96, 0.92);
-      color: #fff;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 600;
-      text-align: center;
-      z-index: 7;
-      cursor: pointer;
-      display: none;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-    }
-    #auto-cal-banner.show { display: block; }
-    #auto-cal-banner .warn {
-      display: block;
-      margin-top: 6px;
-      font-weight: 500;
-      font-size: 13px;
-      color: #fff8c4;
-    }
-    body.clean #auto-cal-banner { display: none !important; }
-
+    
     /* ============================================================
        HEIC CONVERSION INDICATOR
        ============================================================
@@ -517,7 +484,6 @@
     </div>
     <canvas id="canvas" style="display:none"></canvas>
     <div id="hint" style="display:none"></div>
-    <div id="auto-cal-banner"></div>
     <button id="scale-badge"></button>
     <button id="fab-fit" title="Fit to screen">1:1</button>
   </div>
@@ -745,6 +711,26 @@ const ARUCO_MARKER_SIZES_MM = {
   2: 100,   // large damage  (> 200 mm)
 };
 
+/* ============================================================
+   PERSPECTIVE TOLERANCE
+   ============================================================
+   When the detected marker's four sides differ in length by more
+   than this ratio (max_side / min_side), the photo is considered
+   too tilted for reliable measurement: we block automatic
+   calibration and force the user to either retake the photo or
+   explicitly continue under their own responsibility.
+
+   1.00 = perfectly square (impossible in practice).
+   1.05 = barely noticeable tilt; well within 2% error target.
+   1.10 = ~3-5% measurement error using averaged scale (our limit).
+   1.15 = ~5-10% error.
+   1.30 = clearly tilted, errors over 10%.
+
+   Lower values are stricter (more rejections, more accuracy).
+   Raising this above 1.15 makes the protection essentially useless.
+   ============================================================ */
+const PERSPECTIVE_TILT_LIMIT = 1.10;
+
 
 /* ============================================================
    SAFE ZONE
@@ -923,6 +909,8 @@ const state = {
 
   calibPoints: [],
   mmPerPixel: null,
+  calibTilted: false,    // true if user accepted a tilted-marker calibration
+  calibMarkerId: null,   // ID of the auto-detected marker, null if manual
   dimensions: [],
   pendingA: null,
   pendingB: null,
@@ -1054,6 +1042,8 @@ function loadPhotoFromBlob(blob) {
       state.calibPoints = [];
       state.dimensions = [];
       state.mmPerPixel = null;
+      state.calibTilted = false;
+      state.calibMarkerId = null;
       state.pendingA = null;
       state.pendingB = null;
       state.dimCounter = 0;
@@ -1116,48 +1106,6 @@ function tryAutoCalibration() {
   setPhase('calib-1');
   modalOnboard.classList.add('show');
 }
-
-
-/* ============================================================
-   AUTO-CALIBRATION BANNER
-   ============================================================
-   Shows a green confirmation banner with the detected marker's
-   ID and the resulting scale. Adds a perspective-distortion
-   warning when the marker's side lengths are noticeably uneven
-   (a sign the photo was taken at an angle).
-
-   The banner auto-hides after a few seconds and also hides on
-   first interaction with the canvas, so it never gets in the
-   way of measurement.
-   ============================================================ */
-
-const AUTO_CAL_BANNER_TIMEOUT_MS = 5000;   // 5 seconds
-const PERSPECTIVE_WARN_THRESHOLD = 1.15;   // sideVariance > this → warn
-
-let autoCalBannerTimer = null;
-const autoCalBanner = document.getElementById('auto-cal-banner');
-
-function showAutoCalBanner(marker) {
-  let html = `✓ Marker ID ${marker.id} detected — ` +
-             `scale: ${marker.mmPerPixel.toFixed(3)} mm/px`;
-  if (marker.sideVariance > PERSPECTIVE_WARN_THRESHOLD) {
-    html += `<span class="warn">⚠ Photo looks tilted — scale is approximate. ` +
-            `Consider retaking the photo more square-on.</span>`;
-  }
-  autoCalBanner.innerHTML = html;
-  autoCalBanner.classList.add('show');
-
-  clearTimeout(autoCalBannerTimer);
-  autoCalBannerTimer = setTimeout(hideAutoCalBanner, AUTO_CAL_BANNER_TIMEOUT_MS);
-}
-
-function hideAutoCalBanner() {
-  autoCalBanner.classList.remove('show');
-  clearTimeout(autoCalBannerTimer);
-  autoCalBannerTimer = null;
-}
-
-autoCalBanner.addEventListener('click', hideAutoCalBanner);
 
 
 /* ============================================================
@@ -1450,7 +1398,6 @@ function onWheel(evt) {
    TAP HANDLER
    ============================================================ */
 function handleTap(imgPoint) {
-  hideAutoCalBanner();
   if (state.phase === 'calib-1') { state.calibPoints[0] = imgPoint; setPhase('calib-1-set'); }
   else if (state.phase === 'calib-1-set') { state.calibPoints[0] = imgPoint; redraw(); }
   else if (state.phase === 'calib-2') { state.calibPoints[1] = imgPoint; setPhase('calib-2-set'); }
@@ -1567,6 +1514,8 @@ document.getElementById('new-confirm').addEventListener('click', () => {
   state.calibPoints = [];
   state.dimensions = [];
   state.mmPerPixel = null;
+  state.calibTilted = false;
+  state.calibMarkerId = null;
   state.pendingA = null;
   state.pendingB = null;
   state.dimCounter = 0;
@@ -1716,7 +1665,19 @@ function setPhase(newPhase) {
 
   if (state.mmPerPixel) {
     badge.style.display = 'inline-flex';
-    badge.textContent = `scale: ${state.mmPerPixel.toFixed(3)} mm/px`;
+    /* Build badge text. Three pieces of state combine here:
+       - state.calibMarkerId: which ArUco marker was used (null if manual)
+       - state.calibTilted:   user accepted a tilted-marker calibration
+       - state.mmPerPixel:    the scale itself
+       We show the ID only when it exists (i.e. came from auto detection).
+       We prefix a ⚠ and switch to red when the calibration was tilted. */
+    const idPart    = (state.calibMarkerId != null) ? `ID ${state.calibMarkerId} — ` : '';
+    const tiltedPart = state.calibTilted ? '⚠ ' : '';
+    badge.textContent = `${tiltedPart}${idPart}${state.mmPerPixel.toFixed(3)} mm/px`;
+    badge.style.background = state.calibTilted
+      ? 'rgba(231, 76, 60, 0.95)'
+      : 'rgba(255, 235, 59, 0.9)';
+    badge.style.color = state.calibTilted ? '#fff' : '#000';
   } else {
     badge.style.display = 'none';
   }
