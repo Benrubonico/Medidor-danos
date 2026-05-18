@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Damage Measurement Tool</title>
+  <link rel="icon" href="data:,">
   <!-- ============================================================
        OPENCV.JS LOADER
        ============================================================
@@ -14,6 +15,16 @@
        readiness block in the script section).
        ============================================================ -->
   <script async src="lib/opencv.js"></script>
+  <!-- ============================================================
+       HEIC2ANY LOADER
+       ============================================================
+       Converts HEIC/HEIF photos (taken by modern iPhones and some
+       Android phones) into JPEG in the browser, so they can be
+       processed by the rest of the app. Loaded async; the readiness
+       block waits for window.heic2any to be defined before
+       enabling the photo-pick buttons.
+       ============================================================ -->
+  <script async src="lib/heic2any.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -614,6 +625,14 @@
        must exist as a function for detection to be usable. */
     var arucoAvailable = (typeof cv.aruco_ArucoDetector === 'function');
     console.log('OpenCV ready, ArUco available:', arucoAvailable);
+
+    /* heic2any usually loads faster than OpenCV (it's much smaller),
+       so by the time we get here it should already be defined as
+       window.heic2any. If for some reason it isn't, log false; the
+       app will still work with non-HEIC photos but HEIC files will
+       fail in loadPhotoFromFile. */
+    var heicAvailable = (typeof window.heic2any === 'function');
+    console.log('heic2any ready:', heicAvailable);
   }
 
   if (isReady()) { onReady(); return; }
