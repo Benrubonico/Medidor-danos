@@ -430,6 +430,37 @@
       color: #fff8c4;
     }
     body.clean #auto-cal-banner { display: none !important; }
+
+    /* ============================================================
+       HEIC CONVERSION INDICATOR
+       ============================================================
+       Shown briefly while converting an HEIC photo to JPEG. The
+       conversion runs entirely in the browser; the indicator just
+       tells the user the app hasn't frozen.
+       ============================================================ */
+    #heic-converting {
+      position: fixed;
+      inset: 0;
+      background: rgba(17, 17, 17, 0.85);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 16px;
+      z-index: 60;
+      padding: 20px;
+      text-align: center;
+    }
+    #heic-converting.show { display: flex; }
+    #heic-converting .spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid #333;
+      border-top-color: #27ae60;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    #heic-converting .label { font-size: 14px; color: #ccc; }
   </style>
 </head>
 <body>
@@ -462,6 +493,16 @@
   <div class="spinner"></div>
   <div class="label">Loading measurement engine…</div>
   <div class="sublabel">First load takes a few seconds. After that it's instant.</div>
+</div>
+
+<!-- ============================================================
+     HEIC CONVERSION INDICATOR
+     ============================================================
+     Shown briefly while heic2any converts a HEIC photo to JPEG.
+     ============================================================ -->
+<div id="heic-converting">
+  <div class="spinner"></div>
+  <div class="label">Converting HEIC photo to JPEG…</div>
 </div>
 
 <div id="app" hidden>
@@ -949,6 +990,60 @@ btnRetakeGallery.addEventListener('click', () => fileGallery.click());
 });
 
 function loadPhotoFromFile(file) {
+  /* HEIC detection — check both the MIME type and the filename
+     extension. The MIME type is the more reliable signal but some
+     Android browsers leave it empty, so we fall back to extension. */
+  const isHeic = /image\/hei[cf]/i.test(file.type || '') ||
+                 /\.(heic|heif)$/i.test(file.name || '');
+
+  if (isHeic) {
+    convertHeicAndLoad(file);
+  } else {
+    loadPhotoFromBlob(file);
+  }
+}
+
+/* ============================================================
+   HEIC CONVERSION
+   ============================================================
+   HEIC is Apple's image format, also used by modern Android
+   phones. Browsers cannot decode it natively, so we use
+   heic2any (libheif compiled to WebAssembly) to convert it to
+   JPEG in the browser before the rest of the app sees it.
+
+   Conversion takes a couple of seconds for typical photos; we
+   show a spinner so the user knows the app hasn't frozen.
+
+   Quality 0.92 matches what the app uses elsewhere when exporting
+   JPEGs — a sensible balance of file size and fidelity.
+   ============================================================ */
+async function convertHeicAndLoad(file) {
+  const indicator = document.getElementById('heic-converting');
+  indicator.classList.add('show');
+  try {
+    const jpegBlob = await window.heic2any({
+      blob: file,
+      toType: 'image/jpeg',
+      quality: 0.92
+    });
+    /* heic2any can return a Blob or an array of Blobs (for
+       animated HEIC bursts). For a normal photo we expect a
+       single Blob; if we got an array, take the first frame. */
+    const blob = Array.isArray(jpegBlob) ? jpegBlob[0] : jpegBlob;
+    loadPhotoFromBlob(blob);
+  } catch (err) {
+    console.error('HEIC conversion failed:', err);
+    alert('Could not read this HEIC photo. Please try another photo.');
+  } finally {
+    indicator.classList.remove('show');
+  }
+}
+
+/* Shared image-loading code: takes any Blob (JPEG, PNG, or the
+   JPEG produced by HEIC conversion) and pushes it through the
+   existing FileReader/Image pipeline so the rest of the app sees
+   it as a normal photo. */
+function loadPhotoFromBlob(blob) {
   const reader = new FileReader();
   reader.onload = (e) => {
     const img = new Image();
@@ -971,7 +1066,7 @@ function loadPhotoFromFile(file) {
     };
     img.src = e.target.result;
   };
-  reader.readAsDataURL(file);
+  reader.readAsDataURL(blob);
 }
 
 
