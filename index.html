@@ -731,25 +731,6 @@ const ARUCO_MARKER_SIZES_MM = {
    ============================================================ */
 const PERSPECTIVE_TILT_LIMIT = 1.10;
 
-
-/* ============================================================
-   SAFE ZONE
-   ============================================================
-   Visual guide drawn on top of the photo to encourage centering
-   the ArUco marker and the damaged area within the central, low-
-   distortion region of the camera lens. Purely passive — does not
-   block any action.
-
-   SAFE_ZONE_RATIO: fraction of the canvas width/height covered by
-   the safe zone. 0.70 means a rectangle 70% wide and 70% tall,
-   centered. Lower values are stricter (less distortion, less
-   framing freedom). Raising above 0.85 makes the guide nearly
-   useless.
-   ============================================================ */
-
-const SAFE_ZONE_RATIO = 0.70;
-
-
 /* ============================================================
    AUTH / LOGIN
    ============================================================
@@ -1085,24 +1066,57 @@ function tryAutoCalibration() {
 
   if (result.best) {
     const m = result.best;
-    /* Two opposite corners of the marker as the "reference
-       segment". The diagonal length in px does NOT match the
-       side length, so we cannot reuse mm/pixel from the segment;
-       instead we just store the segment for UI display and set
-       mmPerPixel directly from the marker's own scale. */
-    state.calibPoints = [m.corners[0], m.corners[2]];
-    state.mmPerPixel  = m.mmPerPixel;
     console.log(`Auto calibration OK: marker ID ${m.id}, ` +
                 `${m.sizeMm} mm, scale = ${m.mmPerPixel.toFixed(4)} mm/px, ` +
                 `side variance = ${m.sideVariance.toFixed(3)}`);
-    setPhase('measure-idle');
-    showAutoCalBanner(m);
+
+    /* Block the calibration if the photo is too tilted. The user
+       will be shown a modal (Edición B) with two choices: retake
+       the photo, or accept the risk. We stash the detected marker
+       in state.pendingMarker so the modal handlers can decide. */
+    if (m.sideVariance > PERSPECTIVE_TILT_LIMIT) {
+      state.pendingMarker = m;
+      showTiltedPhotoModal(m);
+      return;
+    }
+
+    /* Foto plana: aplicar la calibración directamente. */
+    applyAutoCalibration(m, false);
     return;
   }
 
   /* No known marker detected — fall back to the manual flow,
      identical to the pre-ArUco behaviour of the app. */
   console.log('No ArUco marker detected, falling back to manual calibration.');
+  setPhase('calib-1');
+  modalOnboard.classList.add('show');
+}
+
+
+/* Apply a detected marker as the new calibration. Called either
+   directly when the photo is acceptably flat, or from the tilted-
+   photo modal when the user explicitly chooses to continue. The
+   `tilted` flag controls whether the badge shows a warning. */
+function applyAutoCalibration(marker, tilted) {
+  /* Two opposite corners of the marker as the "reference segment".
+     The diagonal length in px does NOT match the side length, so
+     we cannot reuse mm/pixel from the segment; instead we store the
+     segment for UI display and set mmPerPixel directly from the
+     marker's own scale. */
+  state.calibPoints   = [marker.corners[0], marker.corners[2]];
+  state.mmPerPixel    = marker.mmPerPixel;
+  state.calibMarkerId = marker.id;
+  state.calibTilted   = tilted;
+  setPhase('measure-idle');
+}
+
+
+/* Placeholder for the tilted-photo modal (full implementation
+   comes in the next edition). For now we log and fall back to
+   the manual flow so the app does not get stuck. */
+function showTiltedPhotoModal(marker) {
+  console.warn(`Photo too tilted (variance = ${marker.sideVariance.toFixed(3)}); ` +
+               `tilted-photo modal not yet implemented, falling back to manual.`);
   setPhase('calib-1');
   modalOnboard.classList.add('show');
 }
@@ -1211,28 +1225,7 @@ function redraw() {
   const stroke    = baseStroke() * k;
   const fontSize  = baseFontSize() * k;
 
-  /* Safe zone guide: a centred dashed rectangle drawn only during
-     the manual calibration phases, when the user is still deciding
-     whether the photo's framing is good enough. Once the scale is
-     set and we move into measurement, the guide disappears so it
-     doesn't clutter the workspace. Skipped in exports and in clean
-     mode. Drawn before user marks so those sit on top. */
-  const inCalibPhase = state.phase === 'calib-1' || state.phase === 'calib-1-set'
-                    || state.phase === 'calib-2' || state.phase === 'calib-2-set';
-  if (inCalibPhase && !exportMode && !document.body.classList.contains('clean')) {
-    const w = canvas.width  * SAFE_ZONE_RATIO;
-    const h = canvas.height * SAFE_ZONE_RATIO;
-    const x = (canvas.width  - w) / 2;
-    const y = (canvas.height - h) / 2;
-    ctx.save();
-    ctx.strokeStyle = '#00bcd4';
-    ctx.lineWidth = stroke;
-    ctx.setLineDash([10 * imagePerScreenPx() * k, 8 * imagePerScreenPx() * k]);
-    ctx.strokeRect(x, y, w, h);
-    ctx.restore();
-  }
-
-  state.calibPoints.forEach(p => drawCross(p.x, p.y, '#ffeb3b', crossSize, stroke));
+    state.calibPoints.forEach(p => drawCross(p.x, p.y, '#ffeb3b', crossSize, stroke));
   if (state.calibPoints.length === 2) {
     const [a, b] = state.calibPoints;
     drawLine(a, b, '#ffeb3b', stroke);
