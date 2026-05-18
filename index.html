@@ -585,6 +585,38 @@
   </div>
 </div>
 
+<!-- ============================================================
+     TILTED PHOTO MODAL (Edición B)
+     ============================================================
+     Shown when an ArUco marker is detected but its four sides
+     differ in length by more than PERSPECTIVE_TILT_LIMIT. The
+     scale derived from such a marker is only approximate, so
+     we make the user take an explicit decision:
+
+       - Retake photo: safest option, listed first.
+       - Continue under my responsibility: applies the scale
+         anyway, with the badge switched to red + ⚠ as a
+         persistent reminder that measurements may be off.
+
+     The side variance is shown in small text so a technical
+     user can judge how bad the tilt is (1.10 is the limit;
+     1.50 is heavily tilted).
+     ============================================================ -->
+<div id="modal-tilted" class="modal">
+  <div class="box">
+    <h3>⚠ Tilted photo detected</h3>
+    <div class="warning">
+      The reference marker looks deformed by the camera angle. Measurements taken from this photo may have noticeable error.
+    </div>
+    <p class="muted">For best accuracy, retake the photo holding the camera as parallel to the surface as possible.</p>
+    <p class="muted" id="tilted-variance"></p>
+    <div class="buttons column">
+      <button id="tilted-retake" class="success">📷 Retake photo</button>
+      <button id="tilted-continue" class="danger">Continue under my responsibility</button>
+    </div>
+  </div>
+</div>
+
 <div id="panel-backdrop"></div>
 <div id="panel">
   <header>
@@ -1111,14 +1143,17 @@ function applyAutoCalibration(marker, tilted) {
 }
 
 
-/* Placeholder for the tilted-photo modal (full implementation
-   comes in the next edition). For now we log and fall back to
-   the manual flow so the app does not get stuck. */
+/* Show the tilted-photo modal. The marker is already stored in
+   state.pendingMarker by the caller (tryAutoCalibration), so all
+   we do here is populate the variance line and reveal the modal.
+   The two button handlers below (tilted-retake / tilted-continue)
+   decide what happens next based on the user's choice. */
 function showTiltedPhotoModal(marker) {
-  console.warn(`Photo too tilted (variance = ${marker.sideVariance.toFixed(3)}); ` +
-               `tilted-photo modal not yet implemented, falling back to manual.`);
-  setPhase('calib-1');
-  modalOnboard.classList.add('show');
+  console.warn(`Photo too tilted: side variance = ${marker.sideVariance.toFixed(3)} ` +
+               `(limit = ${PERSPECTIVE_TILT_LIMIT}).`);
+  document.getElementById('tilted-variance').textContent =
+    `Side variance: ${marker.sideVariance.toFixed(2)} (limit: ${PERSPECTIVE_TILT_LIMIT.toFixed(2)})`;
+  document.getElementById('modal-tilted').classList.add('show');
 }
 
 
@@ -1515,6 +1550,39 @@ document.getElementById('new-confirm').addEventListener('click', () => {
   state.editingReference = false;
   resetZoom();
   setPhase('init');
+});
+
+
+/* ============================================================
+   TILTED PHOTO MODAL — handlers (Edición B)
+   ============================================================
+   Two paths out of the modal:
+
+   - Retake: discard the photo entirely and go back to the
+     welcome screen. The user picks a new photo and the auto-
+     calibration runs again from scratch.
+
+   - Continue under my responsibility: apply the detected
+     marker as the scale anyway, passing tilted=true so the
+     badge turns red with a ⚠ as a persistent reminder that
+     measurements may be off.
+
+   In both cases we clear state.pendingMarker — it has done
+   its job carrying the marker across the modal interaction.
+   ============================================================ */
+document.getElementById('tilted-retake').addEventListener('click', () => {
+  document.getElementById('modal-tilted').classList.remove('show');
+  state.pendingMarker = null;
+  state.photo = null;
+  resetZoom();
+  setPhase('init');
+});
+
+document.getElementById('tilted-continue').addEventListener('click', () => {
+  document.getElementById('modal-tilted').classList.remove('show');
+  const marker = state.pendingMarker;
+  state.pendingMarker = null;
+  if (marker) applyAutoCalibration(marker, true);
 });
 
 
