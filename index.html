@@ -905,6 +905,13 @@ function initApp() {
 const state = {
   phase: 'init',
   photo: null,
+  originalPhoto: null,  // The un-rectified image (HTMLImageElement)
+                        // kept around for the future "view original"
+                        // button (phase 6 step 3). When auto-calibration
+                        // succeeds, `photo` becomes the rectified canvas
+                        // and `originalPhoto` keeps the source image.
+                        // For manual calibration this stays null because
+                        // there is no rectification to compare against.
 
   scale: 1,
   offsetX: 0,
@@ -1052,6 +1059,7 @@ function loadPhotoFromBlob(blob) {
     const img = new Image();
     img.onload = () => {
       state.photo = img;
+      state.originalPhoto = null;
       canvas.width  = img.naturalWidth;
       canvas.height = img.naturalHeight;
       state.calibPoints = [];
@@ -1131,23 +1139,61 @@ function tryAutoCalibration() {
 /* Apply a detected marker as the new calibration. Called either
    directly when the photo is acceptably flat, or from the tilted-
    photo modal when the user explicitly chooses to continue. The
-   `tilted` flag controls whether the badge shows a warning. */
+   `tilted` flag controls whether the badge shows a warning.
+
+   Phase 6 step 2: this function now rectifies the photo using
+   warpPerspective before applying the calibration. After this,
+   state.photo is the rectified canvas (not the original image),
+   and mm/pixel is constant across the whole image — eliminating
+   the "error grows with distance from marker" problem documented
+   in PROJECT_CONTEXT.md "Experimental findings".
+
+   Robustness: if rectification fails for any reason (degenerate
+   matrix, OpenCV edge case, sanity check rejection), we fall
+   back to the pre-step-2 behaviour: use the original photo with
+   the (non-constant) marker-derived scale. The app keeps
+   working, just without the rectification benefit. */
 function applyAutoCalibration(marker, tilted) {
-  /* For auto calibration we store TWO things in state:
-       - calibPoints (two opposite corners): kept for backward
-         compatibility with code paths that read the "reference
-         segment" (badge text, future tools).
-       - calibMarkerCorners (all four corners): used by redraw()
-         to draw the marker as a closed quadrilateral instead of
-         a single diagonal line.
-     mmPerPixel comes directly from the marker's own scale, not
-     from any of these segments, because the diagonal length in
-     px does NOT match the real side length. */
-  state.calibPoints        = [marker.corners[0], marker.corners[2]];
-  state.calibMarkerCorners = marker.corners;
-  state.mmPerPixel         = marker.mmPerPixel;
-  state.calibMarkerId      = marker.id;
-  state.calibTilted        = tilted;
+  let rectified = null;
+  try {
+    rectified = rectifyImageWithMarker(
+      state.photo, marker.corners, marker.sizeMm
+    );
+  } catch (err) {
+    console.warn('Rectification failed, falling back to ' +
+                 'non-rectified calibration:', err);
+  }
+
+  if (rectified) {
+    /* Rectified path: state.photo becomes the rectified canvas,
+       state.originalPhoto keeps the un-rectified image for the
+       upcoming "view original" button. Canvas dimensions are
+       reasserted explicitly (with decision C1 they don't change,
+       but being explicit protects against future tweaks). */
+    state.originalPhoto      = state.photo;
+    state.photo              = rectified.image;
+    canvas.width             = rectified.image.width;
+    canvas.height            = rectified.image.height;
+
+    /* In the rectified space the marker IS a perfect square, so
+       the two "opposite corners" we store for legacy callers
+       (calibPoints) are the TL and BR of that square. */
+    state.calibPoints        = [
+      rectified.markerCornersRectified[0],
+      rectified.markerCornersRectified[2]
+    ];
+    state.calibMarkerCorners = rectified.markerCornersRectified;
+    state.mmPerPixel         = rectified.mmPerPixelRectified;
+  } else {
+    /* Fallback path: same behaviour as before phase 6 step 2. */
+    state.originalPhoto      = null;
+    state.calibPoints        = [marker.corners[0], marker.corners[2]];
+    state.calibMarkerCorners = marker.corners;
+    state.mmPerPixel         = marker.mmPerPixel;
+  }
+
+  state.calibMarkerId = marker.id;
+  state.calibTilted   = tilted;
   setPhase('measure-idle');
 }
 
@@ -1618,6 +1664,7 @@ document.getElementById('new-cancel').addEventListener('click', () => {
 document.getElementById('new-confirm').addEventListener('click', () => {
   modalNewProject.classList.remove('show');
   state.photo = null;
+  state.originalPhoto = null;
   state.calibPoints = [];
   state.dimensions = [];
   state.mmPerPixel = null;
