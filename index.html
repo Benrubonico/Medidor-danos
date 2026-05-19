@@ -2096,6 +2096,191 @@ function detectArucoMarker(img) {
 }
 
 /* ============================================================
+   PERSPECTIVE RECTIFICATION (Phase 6)
+   ============================================================
+   rectifyImageWithMarker(img, markerCorners, markerSizeMm)
+   takes the photo and the four corners of the detected ArUco
+   marker, and returns a "rectified" version of the image where
+   the plane of the marker is seen orthogonally (from directly
+   above). On the rectified image, mm/pixel is constant
+   everywhere — which is the whole point of this phase.
+
+   How it works:
+
+   1. We compute the centroid of the detected marker corners
+      and the average side length in pixels. These give us
+      "where the marker is" and "how big it is" in pixel terms.
+
+   2. We construct an IDEAL square (perfect right angles, all
+      sides equal) centred on the same centroid, with the same
+      average side length. This is where we want the marker to
+      end up in the rectified image.
+
+   3. We ask OpenCV for the perspective transform that maps the
+      4 detected (deformed) corners to the 4 ideal corners.
+
+   4. We apply that transform to the whole image with
+      warpPerspective. The output has the same dimensions as
+      the input (decision C1).
+
+   Why we centre the ideal marker on the original centroid
+   instead of placing it at a fixed location:
+   The rectified image stays visually similar to the original —
+   the marker doesn't jump to a different region. This matters
+   for the upcoming "view original" button (phase 6, step 3),
+   where the user compares the two side by side.
+
+   Memory: every cv.Mat created here is freed in finally{},
+   same pattern as detectArucoMarker.
+
+   Returns:
+   {
+     image:                  HTMLCanvasElement (rectified photo),
+     markerCornersRectified: [{x,y} x 4] in rectified coords,
+     mmPerPixelRectified:    Number (constant across image)
+   }
+
+   Throws on OpenCV failure; caller is responsible for catching.
+   ============================================================ */
+function rectifyImageWithMarker(img, markerCorners, markerSizeMm) {
+  /* Geometry of the ideal target square. We centre it on the
+     centroid of the detected marker so the rectified image
+     looks like the original "straightened in place". */
+  const cx = (markerCorners[0].x + markerCorners[1].x +
+              markerCorners[2].x + markerCorners[3].x) / 4;
+  const cy = (markerCorners[0].y + markerCorners[1].y +
+              markerCorners[2].y + markerCorners[3].y) / 4;
+
+  const sideLengthsPx = [
+    Math.hypot(markerCorners[1].x - markerCorners[0].x,
+               markerCorners[1].y - markerCorners[0].y),
+    Math.hypot(markerCorners[2].x - markerCorners[1].x,
+               markerCorners[2].y - markerCorners[1].y),
+    Math.hypot(markerCorners[3].x - markerCorners[2].x,
+               markerCorners[3].y - markerCorners[2].y),
+    Math.hypot(markerCorners[0].x - markerCorners[3].x,
+               markerCorners[0].y - markerCorners[3].y)
+  ];
+  const avgSidePx = sideLengthsPx.reduce((a, b) => a + b, 0) / 4;
+  const half      = avgSidePx / 2;
+
+  /* Ideal square corners in the SAME order as the detected
+     corners (which OpenCV returns clockwise starting from the
+     top-left of the marker). Same ordering is critical:
+     getPerspectiveTransform pairs them up by index. */
+  const ideal = [
+    { x: cx - half, y: cy - half }, // top-left
+    { x: cx + half, y: cy - half }, // top-right
+    { x: cx + half, y: cy + half }, // bottom-right
+    { x: cx - half, y: cy + half }  // bottom-left
+  ];
+
+  /* OpenCV expects the points as a 4x1 matrix of CV_32FC2
+     (4 points, 2 channels each). cv.matFromArray builds it
+     from a flat array of 8 floats. */
+  const srcPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
+    markerCorners[0].x, markerCorners[0].y,
+    markerCorners[1].x, markerCorners[1].y,
+    markerCorners[2].x, markerCorners[2].y,
+    markerCorners[3].x, markerCorners[3].y
+  ]);
+  const dstPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
+    ideal[0].x, ideal[0].y,
+    ideal[1].x, ideal[1].y,
+    ideal[2].x, ideal[2].y,
+    ideal[3].x, ideal[3].y
+  ]);
+
+  const src       = cv.imread(img);
+  const dst       = new cv.Mat();
+  const M         = cv.getPerspectiveTransform(srcPts, dstPts);
+  const dsize     = new cv.Size(img.naturalWidth, img.naturalHeight);
+  const fillBlack = new cv.Scalar(0, 0, 0, 255);
+
+  try {
+    cv.warpPerspective(src, dst, M, dsize,
+                       cv.INTER_LINEAR, cv.BORDER_CONSTANT, fillBlack);
+
+    /* Render the result into a regular <canvas>. cv.imshow takes
+       a canvas element (or its id) and writes the contents of a
+       cv.Mat into it. Despite the name "imshow", this is the
+       standard way in OpenCV.js to move pixels from the WASM
+       heap back to the DOM. The canvas we create here is
+       offscreen (never appended to the DOM); the caller will
+       assign it to state.photo and the rest of the app will
+       drawImage from it just like any other image element. */
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width  = img.naturalWidth;
+    outCanvas.height = img.naturalHeight;
+    cv.imshow(outCanvas, dst);
+
+    return {
+      image: outCanvas,
+      markerCornersRectified: ideal,
+      mmPerPixelRectified: markerSizeMm / avgSidePx
+    };
+  } finally {
+    srcPts.delete();
+    dstPts.delete();
+    src.delete();
+    dst.delete();
+    M.delete();
+  }
+}
+
+
+/* ============================================================
+   TEST HELPER FOR RECTIFICATION — call from browser console
+   ============================================================
+   Companion to testDetection(). Once you have loaded a photo
+   with a visible ArUco marker, type in the console:
+
+       testRectification()
+
+   It detects the best marker, calls rectifyImageWithMarker on
+   the original photo (state.originalPhoto if present, otherwise
+   the current state.photo), and opens the resulting rectified
+   image in a new browser tab so you can inspect it at full
+   resolution. The app's view is not modified.
+
+   Used during phase 6 step 1 to validate the rectification
+   visually before wiring it into the main flow.
+
+   Note: state.originalPhoto will be introduced in step 2; in
+   step 1 it does not exist yet and we fall back to state.photo.
+   Both branches keep this helper working without changes.
+   ============================================================ */
+window.testRectification = function () {
+  if (!state.photo) {
+    console.log('No photo loaded. Pick a photo first.');
+    return;
+  }
+  const source = state.originalPhoto || state.photo;
+  const result = detectArucoMarker(source);
+  if (!result.best) {
+    console.log('No known marker detected -- cannot rectify.');
+    return;
+  }
+  const m = result.best;
+  console.log(`Rectifying with marker ID ${m.id}, ${m.sizeMm} mm...`);
+
+  try {
+    const r = rectifyImageWithMarker(source, m.corners, m.sizeMm);
+    console.log('Rectification done. New scale: ' +
+                `${r.mmPerPixelRectified.toFixed(4)} mm/px (constant).`);
+    /* Open the rectified canvas as an image in a new tab so the
+       user can inspect it without disturbing the app's canvas. */
+    r.image.toBlob((blob) => {
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+    }, 'image/png');
+  } catch (err) {
+    console.error('Rectification failed:', err);
+  }
+};
+
+
+/* ============================================================
    TEST HELPER — call from browser console
    ============================================================
    While we are still in the testing phase (the detection is
