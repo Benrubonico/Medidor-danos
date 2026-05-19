@@ -2143,46 +2143,84 @@ function detectArucoMarker(img) {
    Throws on OpenCV failure; caller is responsible for catching.
    ============================================================ */
 function rectifyImageWithMarker(img, markerCorners, markerSizeMm) {
-  /* Geometry of the ideal target square. We centre it on the
-     centroid of the detected marker so the rectified image
+  /* ----------------------------------------------------------
+     CORNER REORDERING (canonical / canvas-aligned)
+     ----------------------------------------------------------
+     OpenCV does NOT guarantee a fixed canvas-aligned ordering
+     for the four corners it returns. The order it gives is
+     relative to the marker's own orientation (which way the
+     marker is "facing"), not relative to the image canvas.
+     So if the marker is photographed upside-down or sideways,
+     index [0] is NOT the top-left of the image — it's the
+     top-left of the marker, which may be anywhere on screen.
+
+     This caused a real bug in our first attempt at this phase:
+     a photo with the marker rotated ~180 deg produced a
+     rectified image that was also rotated and severely cropped,
+     because we paired OpenCV's corners with our "ideal" square
+     under a wrong assumption about ordering.
+
+     The fix is to reorder the corners ourselves into a fixed
+     canvas-aligned order BEFORE matching them with the ideal
+     square. Standard trick:
+
+       TL: corner with min(x + y)   (top-left of canvas)
+       BR: corner with max(x + y)   (bottom-right)
+       TR: corner with max(x - y)   (top-right)
+       BL: corner with min(x - y)   (bottom-left)
+
+     This works because (x+y) and (x-y) are monotonic across
+     the diagonals of the canvas, independently of how the
+     marker is rotated, as long as the marker is not tilted
+     more than 45 deg (which would already trigger our tilt
+     warning anyway).
+     ---------------------------------------------------------- */
+  const sortCornersCanonical = (corners) => {
+    const sums  = corners.map(c => c.x + c.y);
+    const diffs = corners.map(c => c.x - c.y);
+    const idxMin = (arr) => arr.indexOf(Math.min(...arr));
+    const idxMax = (arr) => arr.indexOf(Math.max(...arr));
+    return [
+      corners[idxMin(sums)],   // TL
+      corners[idxMax(diffs)],  // TR
+      corners[idxMax(sums)],   // BR
+      corners[idxMin(diffs)]   // BL
+    ];
+  };
+  const c = sortCornersCanonical(markerCorners);
+
+  /* Geometry of the ideal target square. Centre it on the
+     centroid of the (reordered) marker so the rectified image
      looks like the original "straightened in place". */
-  const cx = (markerCorners[0].x + markerCorners[1].x +
-              markerCorners[2].x + markerCorners[3].x) / 4;
-  const cy = (markerCorners[0].y + markerCorners[1].y +
-              markerCorners[2].y + markerCorners[3].y) / 4;
+  const cx = (c[0].x + c[1].x + c[2].x + c[3].x) / 4;
+  const cy = (c[0].y + c[1].y + c[2].y + c[3].y) / 4;
 
   const sideLengthsPx = [
-    Math.hypot(markerCorners[1].x - markerCorners[0].x,
-               markerCorners[1].y - markerCorners[0].y),
-    Math.hypot(markerCorners[2].x - markerCorners[1].x,
-               markerCorners[2].y - markerCorners[1].y),
-    Math.hypot(markerCorners[3].x - markerCorners[2].x,
-               markerCorners[3].y - markerCorners[2].y),
-    Math.hypot(markerCorners[0].x - markerCorners[3].x,
-               markerCorners[0].y - markerCorners[3].y)
+    Math.hypot(c[1].x - c[0].x, c[1].y - c[0].y), // TL -> TR
+    Math.hypot(c[2].x - c[1].x, c[2].y - c[1].y), // TR -> BR
+    Math.hypot(c[3].x - c[2].x, c[3].y - c[2].y), // BR -> BL
+    Math.hypot(c[0].x - c[3].x, c[0].y - c[3].y)  // BL -> TL
   ];
   const avgSidePx = sideLengthsPx.reduce((a, b) => a + b, 0) / 4;
   const half      = avgSidePx / 2;
 
-  /* Ideal square corners in the SAME order as the detected
-     corners (which OpenCV returns clockwise starting from the
-     top-left of the marker). Same ordering is critical:
-     getPerspectiveTransform pairs them up by index. */
+  /* Ideal square corners in canonical order TL, TR, BR, BL,
+     matching the reordered detected corners by index. */
   const ideal = [
-    { x: cx - half, y: cy - half }, // top-left
-    { x: cx + half, y: cy - half }, // top-right
-    { x: cx + half, y: cy + half }, // bottom-right
-    { x: cx - half, y: cy + half }  // bottom-left
+    { x: cx - half, y: cy - half }, // TL
+    { x: cx + half, y: cy - half }, // TR
+    { x: cx + half, y: cy + half }, // BR
+    { x: cx - half, y: cy + half }  // BL
   ];
 
   /* OpenCV expects the points as a 4x1 matrix of CV_32FC2
      (4 points, 2 channels each). cv.matFromArray builds it
      from a flat array of 8 floats. */
   const srcPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
-    markerCorners[0].x, markerCorners[0].y,
-    markerCorners[1].x, markerCorners[1].y,
-    markerCorners[2].x, markerCorners[2].y,
-    markerCorners[3].x, markerCorners[3].y
+    c[0].x, c[0].y,
+    c[1].x, c[1].y,
+    c[2].x, c[2].y,
+    c[3].x, c[3].y
   ]);
   const dstPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
     ideal[0].x, ideal[0].y,
@@ -2198,6 +2236,52 @@ function rectifyImageWithMarker(img, markerCorners, markerSizeMm) {
   const fillBlack = new cv.Scalar(0, 0, 0, 255);
 
   try {
+    /* ----------------------------------------------------------
+       SANITY CHECK
+       ----------------------------------------------------------
+       Before applying M to the whole image (which is slow), use
+       cv.perspectiveTransform to map JUST the 4 detected corners
+       through M and verify that each one lands within 1 px of
+       its ideal target. If not, M is degenerate / corner order
+       is somehow still wrong, and warpPerspective would produce
+       garbage.
+
+       cv.perspectiveTransform requires a 1xN matrix of CV_32FC2
+       (same layout as the corners we already passed to
+       getPerspectiveTransform), and writes the result to another
+       matrix of the same shape.
+       ---------------------------------------------------------- */
+    const checkSrc = cv.matFromArray(4, 1, cv.CV_32FC2, [
+      c[0].x, c[0].y,
+      c[1].x, c[1].y,
+      c[2].x, c[2].y,
+      c[3].x, c[3].y
+    ]);
+    const checkDst = new cv.Mat();
+    try {
+      cv.perspectiveTransform(checkSrc, checkDst, M);
+      const out = checkDst.data32F;
+      const errors = [
+        Math.hypot(out[0] - ideal[0].x, out[1] - ideal[0].y),
+        Math.hypot(out[2] - ideal[1].x, out[3] - ideal[1].y),
+        Math.hypot(out[4] - ideal[2].x, out[5] - ideal[2].y),
+        Math.hypot(out[6] - ideal[3].x, out[7] - ideal[3].y)
+      ];
+      const maxError = Math.max(...errors);
+      if (maxError > 1.0) {
+        throw new Error(
+          `Perspective sanity check failed: max corner error = ` +
+          `${maxError.toFixed(3)} px (limit 1.0). ` +
+          `Per-corner errors: [${errors.map(e => e.toFixed(2)).join(', ')}]`
+        );
+      }
+      console.log(`Perspective sanity OK (max corner error = ` +
+                  `${maxError.toFixed(3)} px).`);
+    } finally {
+      checkSrc.delete();
+      checkDst.delete();
+    }
+
     cv.warpPerspective(src, dst, M, dsize,
                        cv.INTER_LINEAR, cv.BORDER_CONSTANT, fillBlack);
 
