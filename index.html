@@ -498,6 +498,7 @@
     <button id="btn-add-dim"        class="primary"   style="display:none">➕ Add dimension</button>
     <button id="btn-list"           class="secondary" style="display:none">📋 List</button>
     <button id="btn-clean"          class="secondary icon" style="display:none" title="Clean mode">👁</button>
+    <button id="btn-view-original"  class="secondary"     style="display:none" title="Hold to view original photo">⊙ Original</button>
     <button id="btn-save"           style="display:none">💾 Save</button>
     <button id="btn-share"          style="display:none">📤 Share</button>
   </div>
@@ -764,6 +765,33 @@ const ARUCO_MARKER_SIZES_MM = {
 const PERSPECTIVE_TILT_LIMIT = 1.10;
 
 /* ============================================================
+   SAFE ZONE
+   ============================================================
+   The fraction of the image width and height that defines the
+   "safe zone" rectangle drawn over the photo when it first
+   loads, to help the user confirm that both the marker and the
+   damage are well-centred before starting to measure.
+
+   0.70 means the safe zone covers the central 70% of each
+   dimension, leaving a 15% margin on every side. Objects
+   outside this rectangle are in the zone where lens distortion
+   grows noticeably (confirmed experimentally: error rises from
+   ~0.3% at centre to ~3% at the edges).
+
+   The rectangle is shown from the moment a photo is loaded
+   until the first dimension or calibration point is added,
+   then disappears permanently for that session.
+
+   HOW TO ADJUST:
+   - Increase towards 1.0 to make the safe zone larger (less
+     strict, accepts more of the image as "safe").
+   - Decrease towards 0.5 to make it smaller (stricter).
+   - Do not go below 0.5 or the rectangle becomes too small
+     to be useful as a framing guide.
+   ============================================================ */
+const SAFE_ZONE_RATIO = 0.70;
+
+/* ============================================================
    AUTH / LOGIN
    ============================================================
    HOW TO CONFIGURE:
@@ -938,7 +966,17 @@ const state = {
   pendingB: null,
   dimCounter: 0,
   renamingId: null,
-  editingReference: false
+  editingReference: false,
+
+  /* Safe zone overlay: shown from photo load until the first
+     calibration point or dimension is placed. Once dismissed
+     it stays off for the rest of the session. */
+  showSafeZone: false,
+
+  /* View-original mode: true only while the user holds the
+     "Original" button. Causes redraw() to show the un-rectified
+     photo without any overlays. Cleared on pointer-up/cancel. */
+  viewingOriginal: false
 };
 
 const welcome = document.getElementById('welcome');
@@ -965,6 +1003,7 @@ const btnList          = document.getElementById('btn-list');
 const btnClean         = document.getElementById('btn-clean');
 const btnSave          = document.getElementById('btn-save');
 const btnShare         = document.getElementById('btn-share');
+const btnViewOriginal  = document.getElementById('btn-view-original');
 const fabExitClean     = document.getElementById('fab-exit-clean');
 
 const modalOnboard    = document.getElementById('modal-onboard');
@@ -1071,6 +1110,7 @@ function loadPhotoFromBlob(blob) {
       state.pendingA = null;
       state.pendingB = null;
       state.dimCounter = 0;
+      state.showSafeZone = true;   // shown until first point is placed
       resetZoom();
       /* Try automatic calibration first. If a known ArUco marker
          is found, the scale is set automatically and we skip the
@@ -1308,12 +1348,61 @@ function redraw() {
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.setTransform(state.scale, 0, 0, state.scale, state.offsetX, state.offsetY);
+
+  /* VIEW-ORIGINAL MODE
+     ----------------------------------------------------------
+     While the user holds the "Original" button, draw the
+     un-rectified photo with no overlays at all. The zoom and
+     pan state is untouched, so the two images are compared at
+     the same framing. We return immediately so nothing else
+     is drawn on top of the original.
+     ---------------------------------------------------------- */
+  if (state.viewingOriginal && state.originalPhoto) {
+    ctx.drawImage(state.originalPhoto, 0, 0);
+    return;
+  }
+
   ctx.drawImage(state.photo, 0, 0);
 
   const k = 1 / state.scale;
   const crossSize = baseCrossSize() * k;
   const stroke    = baseStroke() * k;
   const fontSize  = baseFontSize() * k;
+
+  /* SAFE ZONE OVERLAY
+     ----------------------------------------------------------
+     A dashed cyan rectangle delimiting the central SAFE_ZONE_RATIO
+     fraction of the image. Shown only while state.showSafeZone
+     is true (from photo load until the first measurement action).
+     Drawn BEFORE the calibration and dimension overlays so it
+     sits underneath them visually.
+
+     The rectangle is in image coordinates, so it follows zoom
+     and pan automatically via the current canvas transform.
+
+     Dash pattern is defined in image pixels scaled to be
+     screen-consistent (same physical dash size regardless of
+     zoom level). We use setLineDash rather than a CSS trick
+     because we are drawing into a canvas, not using DOM elements.
+     ---------------------------------------------------------- */
+  if (state.showSafeZone && !exportMode) {
+    const margin = (1 - SAFE_ZONE_RATIO) / 2;   // 0.15 for 70%
+    const szX = canvas.width  * margin;
+    const szY = canvas.height * margin;
+    const szW = canvas.width  * SAFE_ZONE_RATIO;
+    const szH = canvas.height * SAFE_ZONE_RATIO;
+
+    /* Dash and gap size: 12 screen px each, scaled to image px. */
+    const dashPx = 12 * imagePerScreenPx() * k;
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0, 229, 255, 0.85)';
+    ctx.lineWidth = 2.5 * imagePerScreenPx() * k;
+    ctx.setLineDash([dashPx, dashPx]);
+    ctx.strokeRect(szX, szY, szW, szH);
+    ctx.setLineDash([]);   // always reset to avoid affecting later draws
+    ctx.restore();
+  }
 
   /* CALIBRATION OVERLAY (Edición H)
      ----------------------------------------------------------
@@ -1571,9 +1660,51 @@ fabExitClean.addEventListener('click', () => document.body.classList.remove('cle
 
 
 /* ============================================================
+   VIEW ORIGINAL BUTTON
+   ============================================================
+   Shows the un-rectified photo while the button is held down,
+   and returns to the rectified view when released. This is the
+   standard "before / after" pattern from mobile photo editors.
+
+   Three pointer events are needed to guarantee the flag is
+   always cleared:
+     - touchend / touchcancel for mobile (finger lifts or is
+       interrupted by a system gesture or incoming call).
+     - mouseup for desktop (normal release).
+     - mouseleave for desktop edge-case: user holds the button,
+       drags the cursor out of the button area, then releases.
+       Without this handler the flag would stay true until the
+       next explicit mouseup on the button.
+
+   We do NOT use the pointer events API here intentionally:
+   pointerleave fires on every child element crossing, which
+   is noisy; mouse + touch is cleaner for this specific case.
+   ============================================================ */
+function startViewOriginal() {
+  if (!state.originalPhoto) return;
+  state.viewingOriginal = true;
+  redraw();
+}
+function stopViewOriginal() {
+  if (!state.viewingOriginal) return;
+  state.viewingOriginal = false;
+  redraw();
+}
+
+btnViewOriginal.addEventListener('mousedown',   startViewOriginal);
+btnViewOriginal.addEventListener('mouseup',     stopViewOriginal);
+btnViewOriginal.addEventListener('mouseleave',  stopViewOriginal);
+btnViewOriginal.addEventListener('touchstart',  (e) => { e.preventDefault(); startViewOriginal(); },
+                                                { passive: false });
+btnViewOriginal.addEventListener('touchend',    stopViewOriginal);
+btnViewOriginal.addEventListener('touchcancel', stopViewOriginal);
+
+
+/* ============================================================
    ONBOARDING
    ============================================================ */
 document.getElementById('onboard-ok').addEventListener('click', () => {
+  state.showSafeZone = false;
   modalOnboard.classList.remove('show');
 });
 document.getElementById('scale-set-ok').addEventListener('click', () => {
@@ -1877,7 +2008,7 @@ function setPhase(newPhase) {
 
 function updateButtons() {
   [btnNewProject, btnRetakeCamera, btnRetakeGallery, btnConfirmPoint, btnConfirmMeas,
-   btnCancelMeas, btnAddDim, btnList, btnClean, btnSave, btnShare]
+   btnCancelMeas, btnAddDim, btnList, btnClean, btnViewOriginal, btnSave, btnShare]
     .forEach(b => b.style.display = 'none');
 
   if (state.phase === 'init') return;
@@ -1893,6 +2024,10 @@ function updateButtons() {
     btnAddDim.style.display = 'block';
     btnList.style.display = 'block';
     btnClean.style.display = 'block';
+    /* Only show "view original" when there IS a rectified version
+       to compare against. For manual calibration (no rectification)
+       this button would be meaningless. */
+    if (state.originalPhoto) btnViewOriginal.style.display = 'block';
     btnSave.style.display = 'block';
     btnShare.style.display = 'block';
   }
@@ -1941,11 +2076,13 @@ function updateHint() {
    ADD DIMENSION + CONFIRMATIONS
    ============================================================ */
 btnAddDim.addEventListener('click', () => {
+  state.showSafeZone = false;
   state.pendingA = null; state.pendingB = null;
   setPhase('measure-1-empty');
 });
 
 btnConfirmPoint.addEventListener('click', () => {
+  state.showSafeZone = false;
   if (state.phase === 'calib-1-set') setPhase('calib-2');
   else if (state.phase === 'calib-2-set') openCalibModal(state.editingReference);
   else if (state.phase === 'measure-1') setPhase('measure-2-empty');
