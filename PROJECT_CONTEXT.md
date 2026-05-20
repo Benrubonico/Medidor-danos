@@ -11,6 +11,7 @@ single codebase.
 
 A working single-file HTML/CSS/JavaScript app: `index.html`.
 Hosted on GitHub (private repo), deployed via GitHub Pages.
+Installable as a PWA (Progressive Web App) on any device.
 
 ### Implemented features
 
@@ -68,16 +69,22 @@ Hosted on GitHub (private repo), deployed via GitHub Pages.
   by default; configurable at top of script.
 - Loading overlay while OpenCV.js initialises (~10 MB WebAssembly,
   needs a few seconds on first load).
+- PWA support (phase 8): the app is installable on any device
+  (Android, iOS, Windows, macOS) via a manifest.json and a service
+  worker (sw.js). Cache-First strategy: small files pre-cached on
+  install; opencv.js (~10 MB) and heic2any (~1 MB) cached on first
+  use. Once cached, the app works fully offline. To force all users
+  to pick up a new version, increment CACHE_VERSION in sw.js.
+  App icon: DMT logo with Accenture purple gradient (#A100FF),
+  192×192 and 512×512 PNG, stored in icons/.
 
 ### Pending work (current focus)
 
-- Phase 8 — Convert to PWA (manifest + service worker for installable,
-  offline-capable app). This is the next task.
+- Phase 9 — Migrate to Azure Static Web Apps with Entra ID
+  authentication. This is the next task.
 
 ### Deferred to separate chats
 
-- Phase 9 — Migrate to Azure Static Web Apps with Entra ID
-  authentication (later phase).
 - Native packaging (APK / .exe): deferred per original spec; only
   revisit if a concrete reason emerges.
 
@@ -96,15 +103,20 @@ Hosted on GitHub (private repo), deployed via GitHub Pages.
    + safe zone overlay (SAFE_ZONE_RATIO = 0.70) + "view original"
    comparison button. All shipped in this phase.
 7. ✅ Safe zone overlay — folded into phase 6.
-8. ⏸ Convert to PWA (next chat).
-9. ⏸ Migrate to Azure Static Web Apps with Entra ID (later phase).
+8. ✅ Convert to PWA: manifest.json + sw.js (Cache-First, opencv.js
+   cached on first use) + icons (DMT, Accenture purple gradient,
+   192×192 and 512×512). App installable and offline-capable.
+   Deployed and verified on GitHub Pages:
+   https://benrubonico.github.io/Medidor-danos/
+9. ⏸ Migrate to Azure Static Web Apps with Entra ID (next chat).
 
 ## Distribution strategy
 
-- Primary: deploy as web app on GitHub Pages (free, works on any
-  device with a modern browser).
-- Offline / installable: convert to PWA (manifest + service worker)
-  in the next dedicated chat.
+- Primary: deployed as PWA on GitHub Pages.
+  URL: https://benrubonico.github.io/Medidor-danos/
+  Users install by opening the URL in Chrome and tapping "Install".
+  After installation, the app works offline from the home screen
+  or desktop, without needing to visit GitHub again.
 - **Future corporate hosting**: migration to Azure Static Web Apps
   with Entra ID authentication is planned for the maturity phase,
   to provide real corporate authentication and align with the
@@ -136,9 +148,13 @@ Hosted on GitHub (private repo), deployed via GitHub Pages.
 
     repo-root/
     ├── index.html              (main app file)
-    ├── manifest.json           (PWA — to be created in phase 8)
-    ├── sw.js                   (service worker — to be created in phase 8)
+    ├── manifest.json           (PWA manifest — created in phase 8)
+    ├── sw.js                   (service worker — created in phase 8)
+    ├── README.md               (repository description for GitHub)
     ├── PROJECT_CONTEXT.md      (this file, also in Claude project context)
+    ├── icons/
+    │   ├── icon-192.png        (PWA icon 192×192, DMT Accenture purple)
+    │   └── icon-512.png        (PWA icon 512×512, DMT Accenture purple)
     └── lib/
         ├── opencv.js           (~9-10 MB, do not edit)
         └── heic2any.min.js     (~1 MB, do not edit)
@@ -338,7 +354,7 @@ are followed:
 - Measurement error under 2% when the marker is fully visible,
   flat, and well lit, and both marker and damage are within the
   central 70% of the image. Achieved post phase 6.
-- Works offline once installed as a PWA (phase 8, pending).
+- Works offline once installed as a PWA. Achieved in phase 8.
 - Total app size under 20 MB (OpenCV.js ~10 MB + heic2any ~1 MB +
   app code, with headroom for future additions).
 
@@ -489,7 +505,7 @@ Visual or AI-flavoured items are deliberately deferred until the
 basic flow is polished and real users are asking for them.
 **Solve the simple problem well before adding complexity.**
 
-## How to start the next session (phase 8 — PWA)
+## How to start the next session (phase 9 — Azure + Entra ID)
 
 When opening a new chat:
 
@@ -506,12 +522,14 @@ When opening a new chat:
    whole-file replacements. Explain each fragment before presenting
    it.
 
-The phase 8 plan should answer these questions before any code:
-- Which files to cache (index.html, lib/opencv.js ~10MB,
-  lib/heic2any.min.js, manifest.json, icons): does opencv.js get
-  cached on first install or on first use?
-- Which cache strategy (cache-first, network-first,
-  stale-while-revalidate)?
-- Do icons need to be created, and is there a reasonable shortcut?
-- Any GitHub Pages restrictions that affect the service worker
-  (scope, HTTPS, paths)?
+The phase 9 plan should answer these questions before any code:
+- What does Azure Static Web Apps provide that GitHub Pages does not?
+  (answer: Entra ID authentication, custom domain, server-side rules)
+- Does the PWA service worker need changes when moving to Azure?
+  (the sw.js cache paths are relative, so likely no changes needed)
+- Does AUTH_ENABLED in index.html get disabled once Entra ID handles
+  authentication? (yes — Entra ID replaces the client-side password)
+- What is the simplest deployment path: GitHub Actions CI/CD from
+  the same repo, or manual deploy?
+- Any cost implications of Azure Static Web Apps for this usage
+  profile (low traffic, internal tool)?
