@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Damage Measurement Tool</title>
   <link rel="icon" href="data:,">
+  <link rel="manifest" href="./manifest.json">
   <!-- ============================================================
        OPENCV.JS LOADER
        ============================================================
@@ -2580,6 +2581,25 @@ window.testDetection = function () {
 setPhase('init');
 
 } /* end of initApp() */
+/* ============================================================
+   SERVICE WORKER REGISTRATION
+   ============================================================
+   Registers sw.js so the browser can install it and enable
+   offline support. Only runs if the browser supports service
+   workers (all modern browsers do; this check is just a safe
+   guard for very old ones).
+   The 'load' event is used deliberately: we wait until the
+   page has fully loaded before registering, so the SW
+   installation download does not compete with opencv.js
+   loading on the first visit.
+   ============================================================ */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .then((reg) => console.log('Service worker registered, scope:', reg.scope))
+      .catch((err) => console.warn('Service worker registration failed:', err));
+  });
+}
 </script>
 </body>
 </html>
